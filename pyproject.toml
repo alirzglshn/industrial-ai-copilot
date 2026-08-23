@@ -40,3 +40,11 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Integration tests load the real embedding model, which downloads weights on
+# first run. They are deselected by default; run them with `pytest -m integration`.
+markers = [
+    "integration: requires the real embedding model (downloads weights on first run)",
+]
+addopts = "-m 'not integration'"

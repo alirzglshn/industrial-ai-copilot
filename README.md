@@ -6,11 +6,12 @@ system retrieves relevant text and images and answers with citations back to
 the source page, using a local VLM/LLM, refusing to answer when the evidence
 isn't there.
 
-Status: **Phase 2 complete — document ingestion pipeline.** Uploading a PDF
-now parses it page by page (text, ruled tables, embedded diagrams), chunks the
-text, and persists everything to Postgres with page numbers preserved end to
-end. Retrieval and answering are not built yet, so `/query` returns `501`.
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the full roadmap.
+Status: **Phase 3 complete — semantic search.** Uploading a PDF parses it page
+by page (text, ruled tables, embedded diagrams), chunks the text, embeds it
+with a local model, and indexes it in Qdrant. `POST /search` answers questions
+with the passages that match and the page each came from. Answer generation is
+not built yet, so `/query` returns `501`. See [ARCHITECTURE.md](ARCHITECTURE.md)
+for the design and the full roadmap.
 
 Everything runs locally and free: open-weight models, no paid APIs, no keys.
 
@@ -32,7 +33,11 @@ src/copilot/
 │   ├── parser.py           pdfplumber (text + tables) + pypdf (images)
 │   ├── chunker.py          page-scoped, structure-aware, overlapping chunks
 │   └── service.py          parse -> chunk -> persist orchestration
-├── retrieval/base.py     Retriever interface              (implemented in Phase 3-4)
+├── retrieval/            DONE (text) — embeddings, Qdrant, semantic search
+│   ├── embedder.py         sentence-transformers, BGE query prefix
+│   ├── vector_store.py     Qdrant collection, upsert, filtered search
+│   ├── indexer.py          chunks -> vectors
+│   └── retriever.py        query -> Evidence with page numbers
 ├── generation/base.py    AnswerGenerator interface         (implemented in Phase 5)
 └── agent/base.py         Tool / Agent interfaces            (implemented in Phase 6)
 ```
@@ -66,6 +71,46 @@ curl http://localhost:8000/documents/{id}/images            # extracted diagrams
 Every chunk carries its `document_id` and `page_number`, which is what makes
 the page-level citations in later phases possible.
 
+## Searching
+
+```bash
+curl -X POST http://localhost:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "why is the pump overheating?", "top_k": 3}'
+```
+
+```json
+{
+  "query": "why is the pump overheating?",
+  "results": [
+    {
+      "kind": "text",
+      "document_id": "0a1b…",
+      "page_number": 37,
+      "score": 0.746,
+      "text": "Overheating is most commonly caused by insufficient cooling airflow…"
+    }
+  ]
+}
+```
+
+Add `"document_id"` to search within one manual. Uploading indexes
+automatically; `POST /documents/{id}/index` re-indexes (safe to repeat).
+
+If the embedding model or Qdrant is unavailable, uploads still succeed and
+report `indexed_chunks: 0` — index later rather than losing the ingest.
+
+## Tests
+
+```bash
+pytest                  # 79 unit tests, no model download
+pytest -m integration   # 6 more, using the real embedding model
+```
+
+The unit suite runs Qdrant in-process and swaps in a lexical stand-in for the
+embedder, so it needs neither a container nor model weights. The integration
+suite loads the real model and asserts genuinely semantic behaviour.
+
 ## Running locally
 
 Requirements: Docker Desktop.
@@ -92,19 +137,18 @@ curl http://localhost:8000/health
 ```bash
 python -m venv .venv
 .venv\Scripts\activate        # Windows
-pip install -e .
+pip install -e ".[ai,dev]" --extra-index-url https://download.pytorch.org/whl/cpu
 uvicorn copilot.main:app --reload
 ```
+
+The `ai` extra pulls torch and sentence-transformers, needed for embeddings.
+The CPU wheel index keeps it from downloading multi-gigabyte CUDA builds that
+are useless without a dedicated GPU. Without the extra the API still runs and
+ingests PDFs; only indexing and search are unavailable.
 
 You'll need a local Postgres and Qdrant reachable at the URLs in `.env`
 (the `docker compose up postgres qdrant` subset works for this).
 
-## Tests
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
 
 ## Roadmap
 

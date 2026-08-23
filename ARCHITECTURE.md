@@ -1,8 +1,9 @@
 # Architecture & Scope
 
-Current status: **Phase 2 complete** (ingestion pipeline). Phase 1 defined the
+Current status: **Phase 3 complete** (semantic search). Phase 1 defined the
 scope, data model, and interfaces below; Phase 2 implemented the PDF →
-structured document pipeline against them.
+structured document pipeline; Phase 3 added embeddings, the Qdrant index, and
+a `/search` endpoint.
 
 
 ## Domain
@@ -239,6 +240,66 @@ needs no system packages and behaves identically on a laptop and in the API
 container. Neither pulls in torch, which is why the whole pipeline is
 testable without any ML dependencies installed.
 
+## Retrieval (Phase 3)
+
+```
+Chunk rows (Postgres)                     Question
+        │                                     │
+        ▼                                     ▼
+ embed_documents()                       embed_query()
+ (no prefix)                    ("Represent this sentence…" prefix)
+        │                                     │
+        ▼                                     ▼
+   Qdrant upsert  ─────────────────►  cosine top-k + document filter
+   id = chunk id                              │
+   payload: document_id,                      ▼
+   page_number, chunk_index, text     Evidence(page_number, text, score)
+```
+
+- **Postgres stays the source of truth.** Qdrant holds vectors plus only the
+  payload needed to resolve a hit back to its page, and the point id *is* the
+  chunk id, so there is no separate identifier to keep in sync.
+- **Queries and passages are embedded differently.** BGE is trained
+  asymmetrically: queries carry an instruction prefix, passages do not.
+  Omitting it measurably degrades retrieval, so `embed_query` and
+  `embed_documents` are separate operations rather than one `embed()`.
+- **Vectors are normalized** and the collection uses cosine distance, which
+  keeps scores comparable across queries.
+- **Re-indexing deletes the document's points first.** Otherwise a manual that
+  shrank after a re-parse would keep answering from text it no longer has.
+- **`document_id` is a payload index**, since it is the only field ever
+  filtered on and an unindexed filter makes Qdrant scan.
+- **Indexing on upload is best-effort.** If the model or Qdrant is
+  unavailable, the upload still succeeds, the document stays `parsed`, and
+  the response reports `indexed_chunks: 0`; `POST /documents/{id}/index`
+  retries. Ingestion never depends on torch being installed.
+
+Document status moves `parsing` → `parsed` → `indexed` (or `failed`).
+
+### Measured on real manuals
+
+Against the same three Grundfos manuals, on CPU with `bge-small-en-v1.5`:
+
+| | |
+|---|---|
+| Model load (cached) | ~2 s |
+| Embedding throughput | ~20 chunks/s |
+| Query latency | 14–20 ms |
+| Index size | 228 chunks across 3 manuals |
+
+Retrieval answers paraphrased questions correctly — "How do I vent or prime
+the pump?" returns the CMBE page describing filling through the vent port and
+the UPS3 section literally titled "Venting the pump", neither of which shares
+the question's wording.
+
+**Scores cluster in a narrow band (≈0.64–0.78).** This is characteristic of
+BGE and matters for Phase 5: a fixed score floor is not a usable test for
+"is the evidence sufficient?", because a plausible hit and an off-topic one
+differ by less than 0.15. The integration tests therefore assert a *relative*
+gap between on- and off-topic queries, and Phase 5 will need a better
+sufficiency signal than a threshold — likely asking the model itself whether
+the retrieved passages actually answer the question.
+
 ## Chosen local models (subject to change as phases land)
 
 Everything below is free, open-weight, and runs entirely locally — no paid
@@ -292,7 +353,13 @@ industrial_ai_copilot/
 │   │   ├── parser.py           #   pdfplumber + pypdf implementation
 │   │   ├── chunker.py          #   page-scoped, structure-aware chunking
 │   │   └── service.py          #   parse -> chunk -> persist orchestration
-│   ├── retrieval/base.py       # Retriever interface             (Phase 3-4)
+│   ├── retrieval/              # DONE for text (Phase 3)
+│   │   ├── base.py             #   Retriever interface, Evidence
+│   │   ├── embedder.py         #   sentence-transformers, BGE query prefix
+│   │   ├── vector_store.py     #   Qdrant collection, upsert, filtered search
+│   │   ├── indexer.py          #   Chunk rows -> vectors
+│   │   ├── retriever.py        #   query -> Evidence
+│   │   └── deps.py             #   lazy, cached stack assembly
 │   ├── generation/base.py      # AnswerGenerator interface       (Phase 5)
 │   └── agent/base.py           # Tool / Agent interfaces         (Phase 6)
 └── tests/
@@ -300,9 +367,10 @@ industrial_ai_copilot/
 
 ## What isn't built yet
 
-Embedding, retrieval, and generation are still interface-only, so `/query`
-returns `501 Not Implemented` until Phase 3-5 land. `Chunk.embedding_id` and
-`Image.embedding_id` are populated in Phase 3 and Phase 4 respectively.
+Generation is still interface-only, so `/query` returns `501 Not Implemented`
+until Phase 5. Retrieval is text-only: `Image.embedding_id` stays null until
+Phase 4 adds image embeddings and merges both kinds of evidence, which is why
+`Evidence` already carries a `kind`.
 
 Ingestion currently runs synchronously inside the upload request. FastAPI
 executes the sync route in a threadpool so it does not block the event loop,

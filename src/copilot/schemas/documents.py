@@ -20,6 +20,9 @@ class DocumentUploadResponse(BaseModel):
     page_count: int
     chunk_count: int
     image_count: int
+    # 0 when indexing was skipped because the embedding model or the vector
+    # store was unavailable; the upload itself still succeeded.
+    indexed_chunks: int = 0
 
 
 class ChunkOut(BaseModel):

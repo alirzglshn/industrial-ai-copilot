@@ -21,7 +21,8 @@ def test_upload_ingests_the_document(client: TestClient, manual_pdf_bytes: bytes
     assert response.status_code == 201
     body = response.json()
     assert body["filename"] == "manual.pdf"
-    assert body["status"] == "parsed"
+    # Upload also indexes, so a successful ingest ends at "indexed".
+    assert body["status"] == "indexed"
     assert body["page_count"] == 2
     assert body["chunk_count"] > 0
     assert body["image_count"] == 1
@@ -82,7 +83,7 @@ def test_uploaded_document_appears_in_listing(client: TestClient, manual_pdf_byt
 
     fetched = client.get(f"/documents/{document_id}").json()
     assert fetched["page_count"] == 2
-    assert fetched["status"] == "parsed"
+    assert fetched["status"] == "indexed"
 
 
 def test_non_pdf_upload_is_rejected(client: TestClient) -> None:

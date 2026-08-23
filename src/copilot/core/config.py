@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 150
 
+    # Retrieval. Indexing on upload keeps the demo to a single call; it is
+    # skipped (leaving the document merely "parsed") if the embedding model or
+    # Qdrant is unavailable, so an upload never fails because of it.
+    auto_index_on_upload: bool = True
+    search_top_k: int = 5
+    embed_batch_size: int = 64
+
     # Sized for CPU-only inference (no dedicated GPU) — see ARCHITECTURE.md.
     text_embedding_model: str = "BAAI/bge-small-en-v1.5"
     image_embedding_model: str = "openai/clip-vit-base-patch32"

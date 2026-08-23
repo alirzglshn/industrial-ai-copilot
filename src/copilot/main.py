@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from copilot.api.routes import documents, health, query
+from copilot.api.routes import documents, health, query, search
 from copilot.core.config import get_settings
 from copilot.core.logging import configure_logging
 from copilot.db.models import Base
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(documents.router)
+    app.include_router(search.router)
     app.include_router(query.router)
 
     return app

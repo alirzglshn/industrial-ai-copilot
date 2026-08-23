@@ -4,16 +4,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from copilot.api.deps import get_optional_retrieval_stack, require_retrieval_stack
 from copilot.core.config import Settings, get_settings
 from copilot.db.models import Chunk, Document, Image
 from copilot.db.session import get_db
 from copilot.ingestion.service import IngestionService, get_ingestion_service
+from copilot.retrieval.deps import RetrievalStack
 from copilot.schemas.documents import (
     ChunkOut,
     DocumentSummary,
     DocumentUploadResponse,
     ImageOut,
 )
+from copilot.schemas.search import IndexResponse
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ def upload_document(
     db: Session = Depends(get_db),
     service: IngestionService = Depends(get_ingestion_service),
     settings: Settings = Depends(get_settings),
+    stack: RetrievalStack | None = Depends(get_optional_retrieval_stack),
 ) -> DocumentUploadResponse:
     """Ingests a PDF: parses text/tables/images per page, chunks it, and persists it."""
     filename = file.filename or ""
@@ -63,6 +67,16 @@ def upload_document(
         select(func.count()).select_from(Image).where(Image.document_id == document.id)
     )
 
+    indexed_chunks = 0
+    if settings.auto_index_on_upload:
+        if stack is None:
+            # Ingestion succeeded; only indexing did not. The document stays
+            # "parsed" and can be indexed later via POST /documents/{id}/index,
+            # so a missing model or a down Qdrant never fails an upload.
+            logger.warning("Skipped indexing document %s: retrieval unavailable", document.id)
+        else:
+            indexed_chunks = stack.indexer.index_document(db, document.id)
+
     return DocumentUploadResponse(
         id=document.id,
         filename=document.filename,
@@ -70,6 +84,26 @@ def upload_document(
         page_count=document.page_count,
         chunk_count=chunk_count or 0,
         image_count=image_count or 0,
+        indexed_chunks=indexed_chunks,
+    )
+
+
+@router.post("/{document_id}/index", response_model=IndexResponse)
+def index_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+    stack: RetrievalStack = Depends(require_retrieval_stack),
+) -> IndexResponse:
+    """(Re)embeds a document's chunks into the vector store.
+
+    Safe to call repeatedly: the document's existing vectors are removed first,
+    so re-indexing after a re-parse cannot leave stale text behind.
+    """
+    document = _get_document_or_404(document_id, db)
+    indexed = stack.indexer.index_document(db, document_id)
+    db.refresh(document)
+    return IndexResponse(
+        document_id=document_id, indexed_chunks=indexed, status=document.status
     )
 
 
