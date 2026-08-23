@@ -186,9 +186,51 @@ Decisions worth calling out, since they shape everything downstream:
 - **Tiny images are filtered out** (default: under 64×64). Manuals repeat
   logos, rules, and spacer graphics on every page; indexing them would bury
   real diagrams in image search results.
+- **Detected grids must pass a quality gate to count as tables.** Line-based
+  detection fires on any ruled box, and an illustrated manual is full of them:
+  diagram frames, figure borders, callout grids, chart axes. A grid is kept
+  only if it has ≥2 rows and columns, ≥4 populated cells, ≥30% of its cells
+  filled, and either real letters or (for an unlabelled numeric grid) ≥8
+  filled cells across ≥3 rows — a plotted axis occupies one or two.
+- **Rejecting a grid must not delete its text.** Because kept tables are
+  excluded from the page text, only *kept* tables are excluded; a rejected
+  frame's words stay in the prose where they belong.
+- **Unresolvable glyph ids are stripped.** pdfminer emits `(cid:N)` when a
+  font has no ToUnicode map. That text is unrecoverable at this layer and is
+  pure noise in a vector index, so it is removed rather than embedded.
 - **Failures stay visible.** A PDF that cannot be parsed leaves a `Document`
   row with status `failed` rather than vanishing, and a single unparseable
   table or undecodable image never costs the rest of the page.
+
+### Measured against real manuals
+
+The gate's thresholds were tuned on three real Grundfos pump manuals
+(UPS3, 22 pp; CR/CRI/CRN/CRT, 28 pp; CMBE, 12 pp), not chosen a priori.
+Before/after, per manual:
+
+| Manual | Junk tables before | after | `(cid:N)` chunks before | after |
+|---|---|---|---|---|
+| CMBE  | 8 of 8   | 0 | 14% | 0% |
+| CR    | 8 of 15  | 0 | 0%  | 0% |
+| UPS3  | 12 of 17 | 1 → 0 | 2% | 0% |
+
+Roughly two thirds of everything the table detector reported in these manuals
+was not a table. Ingestion runs at 1.4–3.8 s per manual on CPU, and no page
+failed to yield text.
+
+### Known limitations
+
+- **Mirrored and doubled text.** Some manuals draw text with a mirrored text
+  matrix or draw it twice to fake bold, which pdfminer reproduces literally
+  (`)BG( hsilgnE` for "English (GB)"; `sesceocnodnsds` for "seconds").
+  Detecting this reliably needs a dictionary check per token, which is
+  fragile; the observed instances sat inside grids the table gate rejects.
+- **`(cid:N)` text is dropped, not recovered.** Recovering it would require
+  rendering the page and running OCR — a reasonable Phase 4 addition for
+  scanned or badly-embedded manuals, since the VLM sees page images anyway.
+- **A few diagram callout boxes still pass the gate** when they hold enough
+  real words. Their content is genuine manual text, so this is mild noise
+  rather than garbage.
 
 Two libraries are used deliberately: **pdfplumber** for text and tables (its
 line-based table detection is the reason it's here) and **pypdf** for

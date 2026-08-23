@@ -14,6 +14,7 @@ system packages and runs the same on a laptop and in the API container.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,12 @@ from copilot.ingestion.base import (
 
 logger = logging.getLogger(__name__)
 
+# pdfminer emits "(cid:N)" when a font carries no ToUnicode map, so the glyph
+# id cannot be resolved to a character. The text is unrecoverable at this
+# layer; embedding it would put pure noise in the vector index, so it is
+# stripped. Recovering it would need OCR over the rendered page.
+_CID_TOKEN = re.compile(r"\(cid:\d+\)")
+
 
 @dataclass
 class PdfParserConfig:
@@ -38,6 +45,73 @@ class PdfParserConfig:
     # smaller than this in either dimension is skipped.
     min_image_width: int = 64
     min_image_height: int = 64
+    # Table quality gate. pdfplumber finds tables from ruling lines, and a
+    # technical manual is full of ruled boxes that are not tables: diagram
+    # frames, figure borders, callout grids, chart axes. Real manuals measured
+    # during Phase 2 produced more junk "tables" than real ones, so a detected
+    # grid must look like actual tabular data before it is treated as one.
+    min_table_rows: int = 2
+    min_table_cols: int = 2
+    min_table_filled_cells: int = 4
+    min_table_fill_ratio: float = 0.3
+    min_table_alpha_chars: int = 8
+    # A grid containing no letters at all is far more often a chart axis than a
+    # specification table, since real tables label their rows or columns. One
+    # is still accepted if it has substantial structure: enough populated cells
+    # and more rows than the one or two a plotted axis occupies.
+    numeric_table_filled_cells: int = 8
+    min_numeric_table_rows: int = 3
+
+
+def clean_extracted_text(text: str) -> str:
+    """Strip unresolvable glyph ids and normalize whitespace.
+
+    Blank lines are preserved because the chunker treats them as paragraph
+    boundaries, but runs of them are collapsed.
+    """
+    lines = []
+    for raw_line in text.splitlines():
+        if not raw_line.strip():
+            lines.append("")
+            continue
+        line = _CID_TOKEN.sub("", raw_line)
+        lines.append(re.sub(r"[ \t]+", " ", line).strip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _clean_cells(table: list[list[str | None]]) -> list[list[str]]:
+    return [
+        [re.sub(r"\s+", " ", _CID_TOKEN.sub("", cell or "")).strip() for cell in row]
+        for row in table
+    ]
+
+
+def is_tabular(table: list[list[str | None]], config: PdfParserConfig) -> bool:
+    """Whether a detected grid carries enough real content to be a table.
+
+    Rejects the empty diagram frames, one-label figure boxes, and chart axes
+    that dominate line-based table detection in illustrated manuals.
+    """
+    rows = _clean_cells(table)
+    if len(rows) < config.min_table_rows:
+        return False
+    if max((len(row) for row in rows), default=0) < config.min_table_cols:
+        return False
+
+    cells = [cell for row in rows for cell in row]
+    filled = [cell for cell in cells if cell]
+    if len(filled) < config.min_table_filled_cells:
+        return False
+    if len(filled) / len(cells) < config.min_table_fill_ratio:
+        return False
+
+    alpha_chars = sum(character.isalpha() for cell in filled for character in cell)
+    if alpha_chars >= config.min_table_alpha_chars:
+        return True
+    return (
+        len(filled) >= config.numeric_table_filled_cells
+        and len(rows) >= config.min_numeric_table_rows
+    )
 
 
 def _serialize_table(table: list[list[str | None]]) -> str:
@@ -49,10 +123,9 @@ def _serialize_table(table: list[list[str | None]]) -> str:
     would lose.
     """
     lines = []
-    for row in table:
-        cells = [(cell or "").replace("\n", " ").strip() for cell in row]
-        if any(cells):
-            lines.append(" | ".join(cells))
+    for row in _clean_cells(table):
+        if any(row):
+            lines.append(" | ".join(row))
     return "\n".join(lines)
 
 
@@ -67,33 +140,53 @@ class PdfDocumentParser(DocumentParser):
         pages: list[ExtractedPage] = []
         with pdfplumber.open(path) as pdf:
             for page_number, page in enumerate(pdf.pages, start=1):
-                found_tables = []
-                tables: list[str] = []
-                try:
-                    found_tables = page.find_tables()
-                    for table in found_tables:
-                        serialized = _serialize_table(table.extract())
-                        if serialized:
-                            tables.append(serialized)
-                except Exception:
-                    # A single unparseable table must not cost us the page's text.
-                    logger.warning(
-                        "Table extraction failed on page %s of %s", page_number, path.name
-                    )
-                    found_tables = []
+                kept = self._extract_tables(page, page_number, path.name)
 
-                text = self._text_outside_tables(page, found_tables, page_number, path.name)
+                # Only the regions of tables we actually keep are removed from
+                # the page text. A rejected grid is not a table, so its words
+                # belong in the prose — excluding it too would silently delete
+                # the text inside every diagram frame on the page.
+                text = self._text_outside_tables(
+                    page, [table for table, _ in kept], page_number, path.name
+                )
 
                 pages.append(
                     ExtractedPage(
                         page_number=page_number,
-                        text=text,
-                        tables=tables,
+                        text=clean_extracted_text(text),
+                        tables=[serialized for _, serialized in kept],
                         images=images_by_page.get(page_number, []),
                     )
                 )
 
         return ParsedDocument(document_id=document_id, filename=path.name, pages=pages)
+
+    def _extract_tables(self, page, page_number: int, filename: str) -> list[tuple[object, str]]:
+        """Detected grids that pass the quality gate, paired with their text."""
+        try:
+            found = page.find_tables()
+        except Exception:
+            # A page whose tables cannot be detected still contributes its text.
+            logger.warning("Table detection failed on page %s of %s", page_number, filename)
+            return []
+
+        kept: list[tuple[object, str]] = []
+        for table in found:
+            try:
+                rows = table.extract()
+            except Exception:
+                logger.warning(
+                    "Could not read a detected table on page %s of %s", page_number, filename
+                )
+                continue
+
+            if not is_tabular(rows, self.config):
+                continue
+            serialized = _serialize_table(rows)
+            if serialized:
+                kept.append((table, serialized))
+
+        return kept
 
     @staticmethod
     def _text_outside_tables(page, tables, page_number: int, filename: str) -> str:

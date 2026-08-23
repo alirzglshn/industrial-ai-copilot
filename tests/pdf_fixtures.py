@@ -39,6 +39,8 @@ TABLE_ROWS = [
     ["Pump B", "95 C", "18 m3/h"],
 ]
 
+DIAGRAM_LABEL = "Impeller clearance"
+
 
 def _draw_paragraphs(pdf: canvas.Canvas, lines: list[str], start_y: float) -> float:
     pdf.setFont("Helvetica", 11)
@@ -85,7 +87,26 @@ def _image_reader(width: int, height: int) -> ImageReader:
     return ImageReader(buffer)
 
 
-def build_manual_pdf(path: Path, include_tiny_image: bool = False) -> Path:
+def _draw_diagram_frame(pdf: canvas.Canvas, label: str, x: float, y: float) -> None:
+    """A ruled box holding one label.
+
+    Line-based table detection reports these as tables, and illustrated manuals
+    are full of them. The parser must reject the frame as a table while keeping
+    its label in the page text.
+    """
+    width, height = 200.0, 60.0
+    pdf.setLineWidth(1)
+    pdf.rect(x, y, width, height)
+    pdf.line(x, y + height / 2, x + width, y + height / 2)
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(x + 6, y + height / 2 + 8, label)
+
+
+def build_manual_pdf(
+    path: Path,
+    include_tiny_image: bool = False,
+    include_diagram_frame: bool = False,
+) -> Path:
     """Two-page manual: prose + a 200x200 diagram on page 1, prose + a ruled table on page 2."""
     pdf = canvas.Canvas(str(path), pagesize=LETTER)
 
@@ -95,6 +116,8 @@ def build_manual_pdf(path: Path, include_tiny_image: bool = False) -> Path:
         # A 16x16 raster stands in for the logos and spacers manuals repeat on
         # every page; the parser is expected to filter it out.
         pdf.drawImage(_image_reader(16, 16), 400, y - 60, width=16, height=16)
+    if include_diagram_frame:
+        _draw_diagram_frame(pdf, DIAGRAM_LABEL, 320, y - 200)
     pdf.showPage()
 
     y = _draw_paragraphs(pdf, PAGE2_PARAGRAPHS, PAGE_HEIGHT - 72)
