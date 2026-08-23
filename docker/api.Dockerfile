@@ -10,9 +10,15 @@ COPY src ./src
 RUN pip install --no-cache-dir -e ".[ai]" \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Cache model weights in the image layer rather than downloading on first
-# request, which would otherwise make the first upload appear to hang.
 ENV HF_HOME=/app/.hf_cache
+
+# Bake the embedding weights into the image. Without this the model downloads
+# on the first upload, which looks like a hang and fails outright offline.
+ARG TEXT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+ENV TEXT_EMBEDDING_MODEL=${TEXT_EMBEDDING_MODEL}
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('${TEXT_EMBEDDING_MODEL}')"
 
 EXPOSE 8000
 
