@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "industrial-ai-copilot"
+version = "0.1.0"
+description = "AI engineering copilot for technical manuals: multimodal RAG + agent over PDF documentation."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "qdrant-client>=1.9",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
+    # Ingestion pipeline (Phase 2): PDF text/table/image extraction.
+    "pypdf>=4.2",
+    "pdfplumber>=0.11",
+    "Pillow>=10.3",
+]
+
+[project.optional-dependencies]
+# Heavy ML dependencies, needed starting Phase 3 (embeddings) and Phase 5 (VLM).
+# Not installed by default so the API image stays lightweight.
+ai = [
+    "torch>=2.3",
+    "transformers>=4.42",
+    "sentence-transformers>=3.0",
+]
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",
+    # Used to synthesize fixture PDFs (text, tables, images) for ingestion tests.
+    "reportlab>=4.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

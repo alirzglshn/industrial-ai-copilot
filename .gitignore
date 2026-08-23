@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Model weights / large local artifacts
+models/
+*.bin
+*.safetensors
+
+# Uploaded documents and extracted images (runtime data, not source)
+data/uploads/
+data/images/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

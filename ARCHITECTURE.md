@@ -1,0 +1,272 @@
+# Architecture & Scope
+
+Current status: **Phase 2 complete** (ingestion pipeline). Phase 1 defined the
+scope, data model, and interfaces below; Phase 2 implemented the PDF →
+structured document pipeline against them.
+
+
+## Domain
+
+**Industrial equipment technical manuals.** A user uploads a PDF manual (text,
+tables, diagrams, photos) and asks natural-language questions about the
+equipment it describes. The system answers using evidence retrieved from the
+manual and cites the source page(s). When the manual doesn't contain enough
+evidence, it says so instead of guessing.
+
+## Supported inputs
+
+- PDF documents containing:
+  - body text
+  - tables
+  - diagrams / schematics / photos (raster images embedded in the PDF)
+- One manual at a time is treated as a `Document`; a manual can span many
+  `Page`s, and each page can yield multiple text `Chunk`s and zero or more
+  extracted `Image`s.
+
+## User flow (target, end of Phase 5)
+
+```
+Upload PDF
+   │
+   ▼
+Parse (text + tables + images, per page)
+   │
+   ▼
+Chunk text  ──────────────┐
+   │                      │
+   ▼                      ▼
+Embed text            Extract & embed images
+   │                      │
+   ▼                      ▼
+        Qdrant (vectors) + Postgres (metadata)
+                   │
+                   ▼
+        User asks a question
+                   │
+                   ▼
+        Retrieve top-k text chunks + images
+                   │
+                   ▼
+        Local VLM/LLM answers using ONLY retrieved evidence
+                   │
+                   ▼
+        Answer + page citations, or "I don't know"
+```
+
+## System architecture (target, end of Phase 8)
+
+```mermaid
+flowchart TD
+    subgraph Client
+        UI[React UI]
+    end
+
+    subgraph API["FastAPI (this repo)"]
+        Upload["/documents (upload, list, get)"]
+        Query["/query (ask a question)"]
+        Agent["Agent orchestrator"]
+    end
+
+    subgraph Ingestion["Ingestion pipeline (Phase 2)"]
+        Parser[PDF parser]
+        Chunker[Text chunker]
+        ImgExtract[Image extractor]
+    end
+
+    subgraph Retrieval["Retrieval layer (Phase 3-4)"]
+        TextEmbed[Text embedding model]
+        ImgEmbed[Image embedding model]
+        VectorSearch[Qdrant similarity search]
+    end
+
+    subgraph Generation["Generation layer (Phase 5)"]
+        VLM[Local VLM/LLM]
+    end
+
+    subgraph Storage
+        Postgres[(PostgreSQL\ndocuments, pages, chunks, metadata)]
+        Qdrant[(Qdrant\ntext + image vectors)]
+    end
+
+    UI --> Upload
+    UI --> Query
+    Upload --> Parser --> Chunker --> TextEmbed
+    Parser --> ImgExtract --> ImgEmbed
+    TextEmbed --> Qdrant
+    ImgEmbed --> Qdrant
+    Parser --> Postgres
+
+    Query --> Agent
+    Agent -- search_documents --> VectorSearch
+    Agent -- search_images --> VectorSearch
+    Agent -- get_page / get_document_metadata --> Postgres
+    Agent -- calculate --> Agent
+    VectorSearch --> Qdrant
+    Agent --> VLM
+    VLM --> Agent
+    Agent --> Query
+```
+
+## Data model
+
+Every chunk and image is traceable back to its exact source page:
+
+```
+Document
+  id, filename, uploaded_at, page_count, status
+
+Page
+  id, document_id, page_number
+
+Chunk (text)
+  id, document_id, page_number, chunk_index, text, embedding_id
+
+Image
+  id, document_id, page_number, image_index, storage_path, caption, embedding_id
+```
+
+`document_id` + `page_number` are carried on every retrieved unit, which is
+what makes citations possible at answer time.
+
+## Component responsibilities (this repo's package layout)
+
+| Package | Responsibility | Phase implemented |
+|---|---|---|
+| `copilot.ingestion` | PDF → text/table/image extraction, chunking | 2 |
+| `copilot.retrieval` | Embedding + Qdrant search (text & image) | 3-4 |
+| `copilot.generation` | Local VLM/LLM grounded answering | 5 |
+| `copilot.agent` | Tool-using orchestrator (search, calculate, etc.) | 6 |
+| `copilot.db` | SQLAlchemy models + session (Postgres) | 1 (schema), used throughout |
+| `copilot.api` | FastAPI routes | 1 (skeleton), fleshed out per phase |
+| `copilot.core` | Settings, logging | 1 |
+
+Each of `ingestion`, `retrieval`, `generation`, `agent` declares its contract
+as an **abstract interface** in `base.py` — the Phase 1 deliverable — with
+concrete implementations landing per phase. `ingestion` is implemented
+(Phase 2); `retrieval`, `generation`, and `agent` are still interface-only.
+
+## Ingestion pipeline (Phase 2)
+
+```
+PDF upload
+    │
+    ▼
+PdfDocumentParser            (copilot/ingestion/parser.py)
+  ├── pdfplumber → per-page text
+  ├── pdfplumber → per-page ruled tables → "A | B | C" rows
+  └── pypdf      → per-page embedded rasters → PNG on disk
+    │
+    ▼
+ParsedDocument (pages, each with text / tables / images)
+    │
+    ▼
+TextChunker                  (copilot/ingestion/chunker.py)
+    │
+    ▼
+IngestionService             (copilot/ingestion/service.py)
+    │
+    ▼
+Postgres: Document, Page, Chunk, Image rows
+```
+
+Decisions worth calling out, since they shape everything downstream:
+
+- **Chunks never span pages.** Page number is carried from extraction through
+  to the persisted `Chunk`, so a retrieved chunk always resolves to exactly
+  one page — the precondition for the page citations Phase 5 must produce.
+- **Structure before length.** Text splits on paragraphs, then sentences, and
+  only hard-splits mid-sentence as a last resort, because chunks that begin
+  or end mid-thought retrieve poorly.
+- **Tables are chunked separately from prose** and prefixed with `[Table]`.
+  Technical manuals put specifications and tolerances in tables; merging
+  their rows into surrounding paragraphs would destroy row/column adjacency
+  and make exactly the questions this system targets unanswerable.
+- **Overlapping chunks.** Each chunk repeats the tail of its predecessor, so
+  a fact straddling a boundary stays retrievable.
+- **Tiny images are filtered out** (default: under 64×64). Manuals repeat
+  logos, rules, and spacer graphics on every page; indexing them would bury
+  real diagrams in image search results.
+- **Failures stay visible.** A PDF that cannot be parsed leaves a `Document`
+  row with status `failed` rather than vanishing, and a single unparseable
+  table or undecodable image never costs the rest of the page.
+
+Two libraries are used deliberately: **pdfplumber** for text and tables (its
+line-based table detection is the reason it's here) and **pypdf** for
+embedded images. Both are permissively licensed and pure-Python, so ingestion
+needs no system packages and behaves identically on a laptop and in the API
+container. Neither pulls in torch, which is why the whole pipeline is
+testable without any ML dependencies installed.
+
+## Chosen local models (subject to change as phases land)
+
+Everything below is free, open-weight, and runs entirely locally — no paid
+APIs, no API keys, no per-token billing anywhere in this stack. The
+constraint that matters here isn't cost, it's **compute**: this project is
+developed on a machine with only integrated graphics (no dedicated
+NVIDIA/AMD GPU), so every model is chosen to run acceptably on CPU rather
+than assuming a discrete GPU with real VRAM is available.
+
+- **Text embeddings:** `BAAI/bge-small-en-v1.5` via `sentence-transformers` —
+  a ~33M-parameter model, fast enough for CPU-only encoding at ingestion and
+  query time, with retrieval quality close to the larger `bge-base` variant.
+- **Image embeddings (for image retrieval):** CLIP ViT-B/32
+  (`openai/clip-vit-base-patch32`) via `transformers` — the smallest common
+  CLIP variant, shared embedding space with text via a separate text tower,
+  cheap enough to batch-encode extracted diagrams/photos on CPU.
+- **Answer generation (VLM):** `vikhyatk/moondream2` — a ~1.9B-parameter
+  vision-language model explicitly built for edge/CPU inference, with strong
+  document/diagram/OCR-style understanding for its size. This replaces a
+  larger 7B-class VLM (e.g. Qwen2-VL-7B), which is impractical without a
+  dedicated GPU. `SmolVLM2-2.2B-Instruct` is a documented fallback if
+  `moondream2` doesn't hold up on a given manual. Quantized GGUF builds run
+  via `llama.cpp`/`llama-cpp-python` are worth evaluating in Phase 5 if raw
+  `transformers` CPU inference is too slow.
+- **Vector store:** Qdrant, run locally via Docker.
+- **Metadata store:** PostgreSQL, run locally via Docker.
+
+Model choices are read from `copilot.core.config.Settings` (env-driven), not
+hardcoded, so they can be swapped without touching pipeline code — e.g. if
+this later runs on a machine with a real GPU, swapping back to `bge-base`
+and a 7B VLM is a config change, not a rewrite.
+
+## Repository skeleton
+
+```
+industrial_ai_copilot/
+├── ARCHITECTURE.md
+├── README.md
+├── pyproject.toml
+├── docker-compose.yml
+├── docker/
+│   └── api.Dockerfile
+├── src/copilot/
+│   ├── main.py                 # FastAPI app factory
+│   ├── core/                   # settings, logging
+│   ├── api/routes/             # health, documents, query
+│   ├── db/                     # SQLAlchemy models + session
+│   ├── schemas/                # Pydantic request/response models
+│   ├── ingestion/              # DONE (Phase 2)
+│   │   ├── base.py             #   DocumentParser interface
+│   │   ├── parser.py           #   pdfplumber + pypdf implementation
+│   │   ├── chunker.py          #   page-scoped, structure-aware chunking
+│   │   └── service.py          #   parse -> chunk -> persist orchestration
+│   ├── retrieval/base.py       # Retriever interface             (Phase 3-4)
+│   ├── generation/base.py      # AnswerGenerator interface       (Phase 5)
+│   └── agent/base.py           # Tool / Agent interfaces         (Phase 6)
+└── tests/
+```
+
+## What isn't built yet
+
+Embedding, retrieval, and generation are still interface-only, so `/query`
+returns `501 Not Implemented` until Phase 3-5 land. `Chunk.embedding_id` and
+`Image.embedding_id` are populated in Phase 3 and Phase 4 respectively.
+
+Ingestion currently runs synchronously inside the upload request. FastAPI
+executes the sync route in a threadpool so it does not block the event loop,
+but a large manual will hold the connection open for the duration; moving it
+to a background task is a Phase 8 concern.
+
+Tables are created from the models on app startup. That is deliberate for now
+and should become Alembic migrations once the schema needs to change without
+dropping data.
