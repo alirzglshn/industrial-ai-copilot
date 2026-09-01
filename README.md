@@ -1,6 +1,6 @@
 # Industrial AI Copilot
 
-An AI engineering copilot for technical manuals. Upload a PDF (text, tables,
+An AI copilot for technical manuals. Upload a PDF (text, tables,
 diagrams, images) and ask questions about the equipment it describes — the
 system retrieves relevant text and images and answers with citations back to
 the source page, using a local VLM/LLM, refusing to answer when the evidence
