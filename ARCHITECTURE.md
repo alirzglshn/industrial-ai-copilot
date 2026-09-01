@@ -1,20 +1,18 @@
 # Architecture & Scope
 
-Current status: **Phase 8 complete** (React frontend, streaming, history,
-local-only Docker Compose). Phase 1 defined the scope, data model, and
-interfaces below; Phase 2 implemented the PDF → structured document pipeline;
-Phase 3 added embeddings, the Qdrant index, and a `/search` endpoint; Phase 4
-added image embeddings and fused text and diagram evidence into one ranking;
-Phase 5 answers questions from that evidence with a local model, citing pages
-and refusing when the evidence does not support an answer; Phase 6 adds an
-agent that decides for itself which of five tools — text search, image
-search, an exact page lookup, a calculator, and document metadata — a
-question needs, rather than always running the same fixed retrieve-then-answer
-pipeline; Phase 7 measures all of the above against a real question set and a
-real corpus, reporting Recall@K/Precision@K/MRR, faithfulness, hallucination
-rate, and latency as numbers rather than impressions; Phase 8 puts a React UI
-in front of all of it, with token-by-token streaming, browsable Q&A history,
-and one command (`docker compose up --build`) that runs the entire system —
+Current status: **complete** — a full local application. PDF ingestion turns
+an upload into a structured, page-scoped document; text and image embeddings
+land in a Qdrant index behind `/search`; text and diagram evidence are fused
+into one ranking; a local model answers questions from that evidence, citing
+pages and refusing when the evidence does not support an answer; an agent
+decides for itself which of five tools — text search, image search, an exact
+page lookup, a calculator, and document metadata — a question needs, rather
+than always running the same fixed retrieve-then-answer pipeline; an
+evaluation harness measures all of the above against a real question set and
+a real corpus, reporting Recall@K/Precision@K/MRR, faithfulness, hallucination
+rate, and latency as numbers rather than impressions; and a React UI sits in
+front of all of it, with token-by-token streaming, browsable Q&A history, and
+one command (`docker compose up --build`) that runs the entire system —
 frontend included — locally, with nothing deployed anywhere.
 
 
@@ -36,7 +34,7 @@ evidence, it says so instead of guessing.
   `Page`s, and each page can yield multiple text `Chunk`s and zero or more
   extracted `Image`s.
 
-## User flow (target, end of Phase 5)
+## User flow
 
 ```
 Upload PDF
@@ -66,7 +64,7 @@ Embed text            Extract & embed images
         Answer + page citations, or "I don't know"
 ```
 
-## System architecture (target, end of Phase 8)
+## System architecture
 
 ```mermaid
 flowchart TD
@@ -80,19 +78,19 @@ flowchart TD
         Agent["Agent orchestrator"]
     end
 
-    subgraph Ingestion["Ingestion pipeline (Phase 2)"]
+    subgraph Ingestion["Ingestion pipeline"]
         Parser[PDF parser]
         Chunker[Text chunker]
         ImgExtract[Image extractor]
     end
 
-    subgraph Retrieval["Retrieval layer (Phase 3-4)"]
+    subgraph Retrieval["Retrieval layer"]
         TextEmbed[Text embedding model]
         ImgEmbed[Image embedding model]
         VectorSearch[Qdrant similarity search]
     end
 
-    subgraph Generation["Generation layer (Phase 5)"]
+    subgraph Generation["Generation layer"]
         VLM[Local VLM/LLM]
     end
 
@@ -143,22 +141,21 @@ what makes citations possible at answer time.
 
 ## Component responsibilities (this repo's package layout)
 
-| Package | Responsibility | Phase implemented |
-|---|---|---|
-| `copilot.ingestion` | PDF → text/table/image extraction, chunking | 2 |
-| `copilot.retrieval` | Embedding + Qdrant search (text & image) | 3-4 |
-| `copilot.generation` | Local VLM/LLM grounded answering | 5 |
-| `copilot.agent` | Tool-using orchestrator (search, calculate, etc.) | 6 |
-| `copilot.db` | SQLAlchemy models + session (Postgres) | 1 (schema), used throughout |
-| `copilot.api` | FastAPI routes | 1 (skeleton), fleshed out per phase |
-| `copilot.core` | Settings, logging | 1 |
+| Package | Responsibility |
+|---|---|
+| `copilot.ingestion` | PDF → text/table/image extraction, chunking |
+| `copilot.retrieval` | Embedding + Qdrant search (text & image) |
+| `copilot.generation` | Local VLM/LLM grounded answering |
+| `copilot.agent` | Tool-using orchestrator (search, calculate, etc.) |
+| `copilot.db` | SQLAlchemy models + session (Postgres) |
+| `copilot.api` | FastAPI routes |
+| `copilot.core` | Settings, logging |
 
 Each of `ingestion`, `retrieval`, `generation`, `agent` declares its contract
-as an **abstract interface** in `base.py` — the Phase 1 deliverable — with
-concrete implementations landing per phase. `ingestion` is implemented
-(Phase 2); `retrieval`, `generation`, and `agent` are still interface-only.
+as an **abstract interface** in `base.py`, with a concrete implementation
+underneath it.
 
-## Ingestion pipeline (Phase 2)
+## Ingestion pipeline
 
 ```
 PDF upload
@@ -186,7 +183,7 @@ Decisions worth calling out, since they shape everything downstream:
 
 - **Chunks never span pages.** Page number is carried from extraction through
   to the persisted `Chunk`, so a retrieved chunk always resolves to exactly
-  one page — the precondition for the page citations Phase 5 must produce.
+  one page — the precondition for the page citations answering must produce.
 - **Structure before length.** Text splits on paragraphs, then sentences, and
   only hard-splits mid-sentence as a last resort, because chunks that begin
   or end mid-thought retrieve poorly.
@@ -239,8 +236,8 @@ failed to yield text.
   Detecting this reliably needs a dictionary check per token, which is
   fragile; the observed instances sat inside grids the table gate rejects.
 - **`(cid:N)` text is dropped, not recovered.** Recovering it would require
-  rendering the page and running OCR — a reasonable Phase 4 addition for
-  scanned or badly-embedded manuals, since the VLM sees page images anyway.
+  rendering the page and running OCR — a reasonable addition for scanned or
+  badly-embedded manuals, since the VLM sees page images anyway.
 - **A few diagram callout boxes still pass the gate** when they hold enough
   real words. Their content is genuine manual text, so this is mild noise
   rather than garbage.
@@ -252,7 +249,7 @@ needs no system packages and behaves identically on a laptop and in the API
 container. Neither pulls in torch, which is why the whole pipeline is
 testable without any ML dependencies installed.
 
-## Retrieval (Phase 3)
+## Retrieval
 
 ```
 Chunk rows (Postgres)                     Question
@@ -305,14 +302,14 @@ the UPS3 section literally titled "Venting the pump", neither of which shares
 the question's wording.
 
 **Scores cluster in a narrow band (≈0.64–0.78).** This is characteristic of
-BGE and matters for Phase 5: a fixed score floor is not a usable test for
-"is the evidence sufficient?", because a plausible hit and an off-topic one
-differ by less than 0.15. The integration tests therefore assert a *relative*
-gap between on- and off-topic queries, and Phase 5 will need a better
-sufficiency signal than a threshold — likely asking the model itself whether
-the retrieved passages actually answer the question.
+BGE, and it means a fixed score floor is not a usable test for "is the
+evidence sufficient?", because a plausible hit and an off-topic one differ by
+less than 0.15. The integration tests therefore assert a *relative* gap
+between on- and off-topic queries; answering asks the model itself whether the
+retrieved passages actually answer the question, rather than relying on a
+threshold (see "Why the sufficiency signal is not a score threshold" below).
 
-## Multimodal retrieval (Phase 4)
+## Multimodal retrieval
 
 ```
                       question
@@ -336,7 +333,7 @@ the retrieved passages actually answer the question.
 
 Three retrievers, deliberately:
 
-- **Text search** is unchanged from Phase 3.
+- **Text search** is the same retriever described above.
 - **Image search** encodes the question with CLIP's text tower and compares it
   against image vectors from CLIP's image tower. Both towers project into one
   space, which is what makes text → image search possible at all.
@@ -412,8 +409,9 @@ a library's return type.
 
 ### transformers 5.x compatibility
 
-This project runs on transformers 5.x, which changed two things Phase 4 depends
-on. Both are handled, and both are worth knowing before swapping models:
+This project runs on transformers 5.x, which changed two things image
+retrieval depends on. Both are handled, and both are worth knowing before
+swapping models:
 
 - **`get_image_features` / `get_text_features` no longer return a tensor.**
   They return a `BaseModelOutputWithPooling` whose `pooler_output` has been
@@ -432,7 +430,7 @@ weights. **Captioning is not**: it is off by default, and its unit tests use a
 stub captioner, so the wiring is proven but the model call is not. Validate it
 against a real checkpoint before relying on it.
 
-## Grounded answering (Phase 5)
+## Grounded answering
 
 ```
 question
@@ -494,13 +492,14 @@ pages, and to mark inference — and then each of those is checked:
   from pretraining does not. `Evidence.faithfulness` carries the score and
   `unsupported_terms` the specific words the citation does not back;
   `grounded` requires it to clear 0.5. This is a lexical heuristic, not
-  semantic similarity, and deliberately so — Phase 3 already showed that
-  embedding similarity clusters too tightly (≈0.65–0.78, a 0.15 gap between
+  semantic similarity, and deliberately so — embedding similarity was already
+  shown above to cluster too tightly (≈0.65–0.78, a 0.15 gap between
   on- and off-topic) to threshold reliably, whereas word overlap separates a
   real answer from a fabricated one by a wide margin. Its known blind spot is
   a fluent paraphrase that reuses the manual's vocabulary while inverting its
   meaning; catching that needs entailment, which is out of reach of a model
-  this size, and is Phase 7's job to measure rather than this layer's to fix.
+  this size, and is the evaluation harness's job to measure rather than this
+  layer's to fix.
 - **Empty output** is reported as insufficient rather than returned as a
   confident blank.
 - **No retrieved evidence short-circuits entirely**, without calling the model.
@@ -514,7 +513,7 @@ as if "page" and the page number were unsupported claims.
 
 ### Why the sufficiency signal is not a score threshold
 
-Phase 3 measured BGE similarity clustering in ≈0.65–0.78, with an off-topic hit
+Retrieval measured BGE similarity clustering in ≈0.65–0.78, with an off-topic hit
 less than 0.15 below a good one. There is no cutoff in that band that
 separates "relevant" from "irrelevant" without discarding real answers, so
 sufficiency is asked of the model instead of inferred from a number. The
@@ -554,7 +553,7 @@ The answer model is a separate dependency from the retrieval stack, so a
 missing or unloadable model returns 503 from `/query` while `/search` keeps
 working. Retrieval is useful on its own.
 
-## Agent (Phase 6)
+## Agent
 
 ```
 question
@@ -573,23 +572,23 @@ run each call, in order
    └── get_document_meta─┴─► a computed fact (trusted, not citable)
    │
    ▼
-no evidence AND no facts?  ──►  refuse, exactly like Phase 5 with no evidence
-   │
+no evidence AND no facts?  ──►  refuse, exactly like the fixed pipeline with
+   │                              no evidence
    ▼
 build_prompt(question, evidence, computed_facts)
    │
    ▼
 lm.chat(...)  ──►  _finish()  ──►  the same refusal detection, citation
-                                    resolution, and faithfulness scoring
-                                    Phase 5 applies — reused unchanged
+                                    resolution, and faithfulness scoring the
+                                    fixed pipeline applies — reused unchanged
 ```
 
 Five tools, matching the project's original spec exactly:
 
 | Tool | Returns | Citable? |
 |---|---|---|
-| `search_documents` | passages via the Phase 3 text retriever | yes (page-scoped) |
-| `search_images` | diagrams via the Phase 4 CLIP retriever | yes (page-scoped) |
+| `search_documents` | passages via the text retriever | yes (page-scoped) |
+| `search_images` | diagrams via the CLIP retriever | yes (page-scoped) |
 | `get_page` | every chunk and image on one exact page, read directly from Postgres | yes (page-scoped) |
 | `calculate` | one number, via a whitelisted-AST expression evaluator (no `eval`) | no — a computed fact |
 | `get_document_metadata` | filename/page-count/status for one manual or all of them | no — a computed fact |
@@ -605,9 +604,10 @@ with text hits it never asked for.
 
 The planner sees the question once and writes out its whole sequence of tool
 calls up front, rather than calling a tool, reading the result, and
-re-planning. This is a deliberate scope decision, not an oversight. Phase 5
-measured what a 0.5–2B model on a CPU with no dedicated GPU can be trusted to
-do reliably, and an iterative loop would multiply both the unreliability
+re-planning. This is a deliberate scope decision, not an oversight. The model
+choice measurements above showed what a 0.5–2B model on a CPU with no
+dedicated GPU can be trusted to do reliably, and an iterative loop would
+multiply both the unreliability
 (every extra turn is another chance to emit something unparseable) and the
 latency (every extra turn is tens of seconds) by the number of steps.
 
@@ -633,24 +633,24 @@ never executed as-is:
 - **Every call is validated against the real tool registry.** An item naming
   an unknown tool, or with non-dict arguments, is dropped rather than crashing
   the request.
-- **Unparseable or entirely-invalid output falls back to Phase 5's own
-  default behaviour** — `search_documents` (+ `search_images`) with the
+- **Unparseable or entirely-invalid output falls back to the fixed pipeline's
+  own default behaviour** — `search_documents` (+ `search_images`) with the
   question as the query. A planning failure must degrade to ordinary RAG, not
-  to no answer at all: the agent is a superset of Phase 5's capability, never
-  a way to fail worse than Phase 5 already handles.
+  to no answer at all: the agent is a superset of the fixed pipeline's
+  capability, never a way to fail worse than it already handles.
 - **A tool call that raises at execution time is caught, logged, and skipped**
   — a missing page, a division by zero — rather than failing the whole
   request. The other calls in the plan still run.
 - **The final answer is held to exactly the same bar as `/query`.** Evidence
   gathered by tools is fed through the identical `build_prompt` /
-  `_finish` path Phase 5 uses, so a citation to a page `get_page` fetched
-  gets the same faithfulness check as one from ordinary retrieval — a tool
-  having fetched something is not inherently more trustworthy than search
-  having found it.
+  `_finish` path the fixed pipeline uses, so a citation to a page `get_page`
+  fetched gets the same faithfulness check as one from ordinary retrieval —
+  a tool having fetched something is not inherently more trustworthy than
+  search having found it.
 
 Results gathered from `calculate` and `get_document_metadata` are not
 Evidence — they have no source page to cite — so they are rendered in the
-prompt's separate `COMPUTED FACTS` section (see Phase 5's grounded-answering
+prompt's separate `COMPUTED FACTS` section (see the grounded-answering
 section above) rather than mixed into the numbered, citable evidence list.
 
 ### Model reuse
@@ -659,9 +659,9 @@ The planner and the final-answer step share one loaded model
 (`copilot.generation.local_lm.get_local_lm`, cached by model name) rather than
 each loading an independent copy — real memory pressure on a machine where
 "VRAM" is ordinary system RAM. When `/query` and `/agent/query` are both
-configured with the default text model, all three code paths — Phase 5's
-direct answering, Phase 6's planning, and Phase 6's final-answer synthesis —
-run on the one model instance actually held in memory.
+configured with the default text model, all three code paths — direct
+answering, planning, and final-answer synthesis — run on the one model
+instance actually held in memory.
 
 ### API
 
@@ -675,7 +675,7 @@ question: the fixed pipeline against the agent that chose its own tools.
 `tool_calls` is always `[]` on `/query`, since the fixed pipeline calls no
 tools.
 
-## Evaluation (Phase 7)
+## Evaluation
 
 ```
 eval/questions.json  ──►  eval/run_evaluation.py  ──►  eval/evaluation_results.json
@@ -706,7 +706,7 @@ story:
   question the manual cannot answer) and are reported as `null`/`n/a` rather
   than scored as 0 — see `eval/metrics.py`'s handling of an empty expected
   set. What is checked is whether the system actually declined.
-- **`calculation`** — exercises Phase 6's calculator; scored by whether the
+- **`calculation`** — exercises the agent's calculator; scored by whether the
   answer text contains an expected substring (e.g. `"18.75"`), since there is
   no page to retrieve for arithmetic.
 
@@ -716,14 +716,14 @@ questions — a refusal made no claim, so it cannot be a hallucinated one; only
 and calculation checks, which retrieval questions do not define.
 
 The bundled `eval/questions.json` (14 questions) runs against the same three
-real Grundfos pump manuals used to verify Phases 2–6 elsewhere in this
-document, with gold pages taken from real, previously-verified retrieval
+real Grundfos pump manuals used elsewhere in this document, with gold pages
+taken from real, previously-verified retrieval
 output rather than guessed. It is intentionally sized for a fast, credible
 demonstration, not the project's eventual target of 50–100 questions —
 reaching that is a data change to `questions.json`, not a change to the
 harness.
 
-### Results (fixed Phase 5 pipeline, `top_k=5`, real BGE + CLIP + Qwen2.5-1.5B-Instruct)
+### Results (fixed pipeline, `top_k=5`, real BGE + CLIP + Qwen2.5-1.5B-Instruct)
 
 Run against the same three real Grundfos manuals used throughout this
 document (`python -m eval.run_evaluation --manuals-dir …`, no `--use-agent`):
@@ -746,7 +746,7 @@ Reading the actual answer text of the 7 ungrounded questions:
 - **4 of 7 cited nothing at all.** Their content is not hallucinated — one
   answer correctly reproduces "speed III," "Section 9.2," and hp-model-specific
   service intervals straight from the manual — the model simply omitted every
-  `[page N]` marker. This is the exact "uncited answer" failure mode Phase 5's
+  `[page N]` marker. This is the exact "uncited answer" failure mode the
   `grounded` check was built to catch, and 1.5B still exhibits it on roughly a
   third of answered questions even after the prompt's worked examples.
 - **3 of 7 did cite a page, and the lexical faithfulness check still scored
@@ -763,8 +763,9 @@ Reading the actual answer text of the 7 ungrounded questions:
 **The one calculation question (q14) failed under the fixed pipeline** — this
 is expected, not a defect: `/query`'s fixed pipeline has no calculator, only
 `/agent/query` does. Re-running the identical question set with `--use-agent`
-is what actually exercises Phase 6's calculator and is the fairer comparison;
-see the API section above for how the two pipelines compare on paper.
+is what actually exercises the agent's calculator and is the fairer
+comparison; see the API section above for how the two pipelines compare on
+paper.
 
 **Precision@5 is depressed by the gold set, not by retrieval.** `top_k=5` was
 used with questions that typically have 1–3 gold pages, so several genuinely
@@ -773,7 +774,7 @@ hand-labelled — a known property of a small, quickly-built gold set rather
 than a retrieval defect (Recall@5 of 0.97 says the actual right pages are
 found almost every time).
 
-## Frontend, streaming, and history (Phase 8)
+## Frontend, streaming, and history
 
 ```
                      http://localhost:3000
@@ -790,11 +791,11 @@ found almost every time).
                     └────────────────────┘
 ```
 
-Everything from Phases 1–7 is unchanged; Phase 8 adds a UI in front of it, a
-way to watch a slow local answer arrive instead of staring at a blank screen
-for it, a browsable log of what was asked, and the means to view a citation's
-actual source page rather than trusting the extracted text blind. None of it
-touches retrieval, generation, grounding, or the agent.
+Everything described above is unchanged; this layer adds a UI in front of it,
+a way to watch a slow local answer arrive instead of staring at a blank
+screen for it, a browsable log of what was asked, and the means to view a
+citation's actual source page rather than trusting the extracted text blind.
+None of it touches retrieval, generation, grounding, or the agent.
 
 ### No authentication, on purpose
 
@@ -814,16 +815,17 @@ and its full answer — text, citations, `grounded`, `faithfulness`,
 `tool_calls` — so a past exchange is exactly reproducible in the history
 sidebar. What this deliberately does not do is feed a prior turn back into a
 later one: each question is still answered independently, by the identical
-retrieval-then-generation (or agent) pipeline Phases 3–6 already built and
-tested. A follow-up like "what about model B?" is answered with zero
+retrieval-then-generation (or agent) pipeline already built and tested
+above. A follow-up like "what about model B?" is answered with zero
 knowledge that "model A" was just discussed. Making that work would mean
 conversation-aware prompt construction and retrieval — a real scope increase
-in Phases 3–6, not a Phase 8 UI concern — and was explicitly left out here.
+to retrieval and generation, not a UI concern — and was explicitly left out
+here.
 
 ### Streaming: why, and how it stays checked
 
-Phase 7 measured **73 seconds** mean generation time for the local 1.5B model
-on this CPU-only machine. A UI showing nothing for over a minute reads as
+The evaluation harness measured **73 seconds** mean generation time for the
+local 1.5B model on this CPU-only machine. A UI showing nothing for over a minute reads as
 broken, not slow. `/query/stream` and `/agent/query/stream` (Server-Sent
 Events) turn that into visible, incremental output:
 
@@ -875,8 +877,8 @@ actually see it.
 
 ### Source-page preview and served images
 
-Two things the API never exposed before Phase 8, both real gaps closed
-because the UI needed them:
+Two things the API never exposed before, both real gaps closed because the
+UI needed them:
 
 - **`GET /documents/{id}/images/{image_id}/file`** — the previous `list_images`
   endpoint only ever returned metadata, including `storage_path`, a
@@ -923,7 +925,7 @@ before `src/` exists) — a real drift risk for a build-speed win that mainly
 matters to someone iterating on the code, not to someone cloning the repo and
 running it once. Left as-is; documented here rather than fixed silently.
 
-## Chosen local models (subject to change as phases land)
+## Chosen local models
 
 Everything below is free, open-weight, and runs entirely locally — no paid
 APIs, no API keys, no per-token billing anywhere in this stack. The
@@ -945,7 +947,7 @@ than assuming a discrete GPU with real VRAM is available.
   larger 7B-class VLM (e.g. Qwen2-VL-7B), which is impractical without a
   dedicated GPU. `SmolVLM2-2.2B-Instruct` is a documented fallback if
   `moondream2` doesn't hold up on a given manual. Quantized GGUF builds run
-  via `llama.cpp`/`llama-cpp-python` are worth evaluating in Phase 5 if raw
+  via `llama.cpp`/`llama-cpp-python` are worth evaluating if raw
   `transformers` CPU inference is too slow.
 - **Vector store:** Qdrant, run locally via Docker.
 - **Metadata store:** PostgreSQL, run locally via Docker.
@@ -965,12 +967,12 @@ industrial_ai_copilot/
 ├── docker-compose.yml            # api, frontend, postgres, qdrant — the whole system
 ├── docker/
 │   └── api.Dockerfile
-├── eval/                          # DONE (Phase 7)
+├── eval/                          # evaluation harness
 │   ├── questions.json              #   ground-truth question set
 │   ├── dataset.py                  #   EvalQuestion, loading
 │   ├── metrics.py                  #   Recall@K, Precision@K, MRR
 │   └── run_evaluation.py           #   ingest a corpus, run the set, report
-├── frontend/                      # DONE (Phase 8) — React, one folder, at repo root
+├── frontend/                      # React, one folder, at repo root
 │   ├── Dockerfile                  #   multi-stage: node build -> nginx serve
 │   ├── nginx.conf                  #   serves the app, proxies API paths, SSE-safe
 │   └── src/
@@ -984,18 +986,18 @@ industrial_ai_copilot/
 │   ├── core/                   # settings, logging
 │   ├── api/
 │   │   ├── routes/             # health, documents, search, query, agent, conversations
-│   │   └── sse.py              # DONE (Phase 8) — Server-Sent Events formatting
+│   │   └── sse.py              # Server-Sent Events formatting
 │   ├── db/                     # SQLAlchemy models + session
 │   ├── schemas/                # Pydantic request/response models
-│   ├── conversation/           # DONE (Phase 8) — Q&A history persistence
+│   ├── conversation/           # Q&A history persistence
 │   │   └── service.py          #   get_or_create_conversation, record_exchange
-│   ├── ingestion/              # DONE (Phase 2), preview.py added in Phase 8
+│   ├── ingestion/              # PDF -> text/tables/images -> chunks -> Postgres
 │   │   ├── base.py             #   DocumentParser interface
 │   │   ├── parser.py           #   pdfplumber + pypdf implementation
 │   │   ├── chunker.py          #   page-scoped, structure-aware chunking
 │   │   ├── service.py          #   parse -> chunk -> persist orchestration
-│   │   └── preview.py          #   render + cache a page as PNG (Phase 8)
-│   ├── retrieval/              # DONE, text and images (Phase 3-4)
+│   │   └── preview.py          #   render + cache a page as PNG
+│   ├── retrieval/              # text and image search, fused
 │   │   ├── base.py             #   Retriever interface, Evidence
 │   │   ├── embedder.py         #   sentence-transformers, BGE query prefix
 │   │   ├── vector_store.py     #   Qdrant collections, upsert, filtered search
@@ -1007,14 +1009,14 @@ industrial_ai_copilot/
 │   │   ├── captioner.py        #   optional VLM captions, off by default
 │   │   ├── multimodal.py       #   rank fusion over all three retrievers
 │   │   └── deps.py             #   lazy, cached stack assembly
-│   ├── generation/             # DONE (Phase 5), streaming added in Phase 8
+│   ├── generation/             # grounded answering with citations, streamed
 │   │   ├── base.py             #   AnswerGenerator interface, Answer, generate_stream
 │   │   ├── prompt.py           #   grounded prompt, citation parsing
 │   │   ├── grounding.py        #   resolve citations against the evidence
 │   │   ├── faithfulness.py     #   does the cited text support the claim?
 │   │   ├── local_lm.py         #   shared model wrapper; chat() and chat_stream()
 │   │   └── generator.py        #   local LLM/VLM impls; stream_answer()
-│   └── agent/                  # DONE (Phase 6), run_stream added in Phase 8
+│   └── agent/                  # a tool-using agent, streamable
 │       ├── base.py             #   Tool / Agent interfaces
 │       ├── tools.py            #   the five tools, incl. the safe calculator
 │       ├── planner.py          #   single-shot LLM planning, with fallback
@@ -1034,10 +1036,10 @@ Ingestion still runs synchronously inside the upload request, and captioning
 would make that materially worse, which is a further reason it is off by
 default. FastAPI executes the sync route in a threadpool so it does not block
 the event loop, but a large manual will hold the connection open for the
-duration. This was flagged as "a Phase 8 concern" earlier in this document and
-was not, in the end, addressed by Phase 8 — the frontend's upload flow shows a
-spinner for the duration instead, which is an honest but not a complete
-answer; moving indexing to an actual background task/job queue remains open.
+duration. This was flagged as a concern earlier in this document and was not,
+in the end, addressed — the frontend's upload flow shows a spinner for the
+duration instead, which is an honest but not a complete answer; moving
+indexing to an actual background task/job queue remains open.
 
 Conversation history is a log, not memory — a follow-up question gets no
 context from the turn before it. See "Conversation history is a log, not
@@ -1048,7 +1050,7 @@ and should become Alembic migrations once the schema needs to change without
 dropping data.
 
 The frontend has no automated test suite (no Vitest/Jest/Playwright setup) —
-verification for Phase 8 was TypeScript's own strict compiler (`tsc -b`,
+verification here was TypeScript's own strict compiler (`tsc -b`,
 `noUnusedLocals`/`noUnusedParameters` on) plus running the real built stack
 end to end (`docker compose up --build`) and confirming every route, including
 SSE streaming through nginx, over `curl`. That is real verification of

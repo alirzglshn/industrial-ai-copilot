@@ -6,7 +6,7 @@ system retrieves relevant text and images and answers with citations back to
 the source page, using a local VLM/LLM, refusing to answer when the evidence
 isn't there.
 
-Status: **Phase 8 complete — a full local app.** Uploading a PDF parses it page
+Status: **complete — a full local app.** Uploading a PDF parses it page
 by page (text, ruled tables, embedded diagrams), chunks the text, embeds both
 text and images with local models, and indexes them in Qdrant. `POST /search`
 returns the passages *and the diagrams* that match; `POST /query` answers a
@@ -41,7 +41,7 @@ React · TypeScript · Tailwind CSS · Docker
 ## Project layout
 
 ```
-frontend/                  DONE — React + TypeScript + Tailwind, one folder, repo root
+frontend/                  React + TypeScript + Tailwind, one folder, repo root
 ├── Dockerfile               multi-stage: node build -> nginx serve
 ├── nginx.conf               serves the app, proxies API paths, SSE-safe
 └── src/
@@ -51,7 +51,7 @@ frontend/                  DONE — React + TypeScript + Tailwind, one folder, r
     └── components/           ChatPanel, MessageBubble, CitationChip,
                                PagePreviewModal, ToolCallTrace, Sidebar, ...
 
-eval/                       DONE — Phase 7 evaluation harness
+eval/                       evaluation harness
 ├── questions.json
 ├── metrics.py                Recall@K, Precision@K, MRR
 └── run_evaluation.py
@@ -65,13 +65,13 @@ src/copilot/
 ├── db/                   SQLAlchemy models (Document, Page, Chunk, Image,
 │                          Conversation, Message) + session
 ├── schemas/              Pydantic request/response models
-├── conversation/         DONE — Q&A history persistence (a log, not memory)
-├── ingestion/            DONE — PDF -> text/tables/images -> chunks -> Postgres
+├── conversation/         Q&A history persistence (a log, not memory)
+├── ingestion/            PDF -> text/tables/images -> chunks -> Postgres
 │   ├── parser.py           pdfplumber (text + tables) + pypdf (images)
 │   ├── chunker.py          page-scoped, structure-aware, overlapping chunks
 │   ├── service.py          parse -> chunk -> persist orchestration
 │   └── preview.py          render + cache a source page as PNG
-├── retrieval/            DONE — text + image search, fused
+├── retrieval/            text + image search, fused
 │   ├── embedder.py         sentence-transformers, BGE query prefix
 │   ├── vector_store.py     Qdrant collections, upsert, filtered search
 │   ├── indexer.py          chunks -> vectors
@@ -81,17 +81,17 @@ src/copilot/
 │   ├── image_retriever.py  CLIP search + page-context lookup
 │   ├── captioner.py        optional VLM captions, off by default
 │   └── multimodal.py       rank fusion over text and images
-├── generation/           DONE — grounded answering with citations, streamed
+├── generation/           grounded answering with citations, streamed
 │   ├── prompt.py           grounded prompt + citation parsing
 │   ├── grounding.py        resolve citations against the evidence
 │   ├── faithfulness.py     does the cited text actually support the claim?
 │   ├── local_lm.py         shared model wrapper; chat() and chat_stream()
 │   └── generator.py        local LLM (default) and VLM implementations
-└── agent/                DONE — a tool-using agent, streamable
+└── agent/                a tool-using agent, streamable
     ├── tools.py             search_documents, search_images, get_page,
     │                        calculate (safe AST evaluator), get_document_metadata
-    ├── planner.py           single-shot LLM planning, with a Phase 5 fallback
-    ├── orchestrator.py      run()/run_stream() a plan, reuses Phase 5's checks
+    ├── planner.py           single-shot LLM planning, with a default fallback
+    ├── orchestrator.py      run()/run_stream() a plan, reuses the same grounding checks
     └── deps.py              lazy, cached agent assembly
 ```
 
@@ -122,7 +122,7 @@ curl http://localhost:8000/documents/{id}/images            # extracted diagrams
 ```
 
 Every chunk carries its `document_id` and `page_number`, which is what makes
-the page-level citations in later phases possible.
+the page-level citations elsewhere in the app possible.
 
 ## Searching
 
@@ -298,9 +298,9 @@ python -m eval.run_evaluation --manuals-dir path/to/your/pdfs --use-agent
 
 `eval/questions.json` is a ground-truth set — gold pages for retrieval
 questions, `expect_insufficient` for off-topic refusal-control questions,
-`answer_must_contain` for a calculation question exercising the Phase 6
+`answer_must_contain` for a calculation question exercising the agent's
 calculator. The harness ingests every PDF in `--manuals-dir` fresh, runs each
-question through the real retrieval stack and (by default) the fixed Phase 5
+question through the real retrieval stack and (by default) the fixed
 pipeline, and reports Recall@K/Precision@K/MRR alongside the exact same
 `grounded`/`faithfulness`/`insufficient_evidence` fields `/query` returns —
 there is no separate scoring path, so the numbers describe the real API.
@@ -365,8 +365,9 @@ curl http://localhost:8000/health
 The first build downloads and bakes in the embedding model and installs
 CPU-only PyTorch, so it takes a few minutes. Rebuilding after an edit to
 `src/` currently redoes that (a known, documented tradeoff — see
-ARCHITECTURE.md's Phase 8 section on why it's left as-is); rebuilding after
-only editing `frontend/` is fast, since its Docker layer is independent.
+ARCHITECTURE.md's "Local-only, by design" section on why it's left as-is);
+rebuilding after only editing `frontend/` is fast, since its Docker layer is
+independent.
 
 ## Frontend development without Docker
 
@@ -403,12 +404,12 @@ You'll need a local Postgres and Qdrant reachable at the URLs in `.env`
 ## Using the app
 
 Upload a manual from the sidebar, then ask a question. **Direct** always
-retrieves then answers (Phase 5's fixed pipeline); **Agent** decides for
-itself which of five tools a question needs (Phase 6) — try a question that
-needs arithmetic (e.g. "what's the percentage difference between 95°C and
-80°C?") to see the calculator get used, or a page-number question to see
-`get_page`. The answer streams in as it's generated — a real local answer
-takes up to about a minute on CPU (see Phase 7's measured 73s mean generation
+retrieves then answers (the fixed pipeline); **Agent** decides for itself
+which of five tools a question needs — try a question that needs arithmetic
+(e.g. "what's the percentage difference between 95°C and 80°C?") to see the
+calculator get used, or a page-number question to see `get_page`. The answer
+streams in as it's generated — a real local answer takes up to about a
+minute on CPU (see the evaluation harness's measured 73s mean generation
 time), so this matters more than it might sound like it should.
 
 Every answer carries **grounded**/**not grounded** and a **faithfulness**
@@ -419,8 +420,7 @@ see ARCHITECTURE.md).
 
 ## Roadmap
 
-All 8 phases from the original plan are complete: ingestion, embeddings/vector
-search, multimodal retrieval, grounded generation, the tool-using agent layer,
-evaluation, and — this one — a full local application with a UI, streaming,
-and history. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design of
-each.
+The system is complete: ingestion, embeddings/vector search, multimodal
+retrieval, grounded generation, a tool-using agent layer, an evaluation
+harness, and a full local application with a UI, streaming, and history. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the full design of each.
