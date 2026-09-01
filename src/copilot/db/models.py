@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -42,7 +42,7 @@ class Page(Base):
 
 
 class Chunk(Base):
-    """A unit of text retrievable via vector search, always traceable to its source page."""
+    """a unit of text retrievable by vector search, traceable to its source page"""
 
     __tablename__ = "chunks"
 
@@ -57,7 +57,7 @@ class Chunk(Base):
 
 
 class Image(Base):
-    """An image extracted from a page, retrievable via vector search on its own embedding."""
+    """an image extracted from a page, retrievable by its own embedding"""
 
     __tablename__ = "images"
 
@@ -70,3 +70,40 @@ class Image(Base):
     embedding_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="images")
+
+
+class Conversation(Base):
+    """a browsable history of questions and answers, just a log"""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
+    )
+
+
+class Message(Base):
+    """one turn in a conversation, either the question or the answer"""
+
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)  # "user" | "assistant"
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # set on assistant messages only, mirroring what the caller saw
+    pipeline: Mapped[str | None] = mapped_column(String, nullable=True)  # "fixed" | "agent"
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    insufficient_evidence: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    grounded: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    faithfulness: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unsupported_pages: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="messages")

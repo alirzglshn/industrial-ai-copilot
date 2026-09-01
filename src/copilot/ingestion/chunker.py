@@ -1,22 +1,4 @@
-"""Phase 2: split extracted page text into retrievable chunks.
-
-Chunking strategy, and why:
-
-- **Chunks never span pages.** Every chunk carries the page it came from, so
-  a citation always resolves to exactly one page of the manual. This is the
-  whole reason the pipeline preserves page numbers end to end.
-- **Split on structure first, length second.** Text is broken into
-  paragraphs, over-long paragraphs into sentences, and only then hard-split
-  at an arbitrary character. Retrieval quality suffers when a chunk starts or
-  ends mid-sentence, so that is the last resort rather than the default.
-- **Tables are chunked separately from prose.** A table's rows are a single
-  semantic unit; merging them into surrounding paragraphs makes both harder
-  to retrieve. Tables are emitted as their own chunks, prefixed so the
-  answering model can tell it is reading tabular data.
-- **Consecutive chunks overlap.** A fact that straddles a chunk boundary
-  would otherwise be unretrievable from either side, so each chunk repeats
-  the tail of its predecessor.
-"""
+"""splitting extracted page text into retrievable, page-scoped chunks"""
 
 import re
 from dataclasses import dataclass
@@ -31,7 +13,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 @dataclass
 class TextChunk:
-    """A unit of text to embed and retrieve, traceable to one source page."""
+    """a unit of text to embed and retrieve, traceable to one source page"""
 
     page_number: int
     chunk_index: int
@@ -43,7 +25,7 @@ def _hard_split(text: str, max_len: int) -> list[str]:
 
 
 def _segment(text: str, max_len: int) -> list[str]:
-    """Break text into pieces no longer than max_len, preferring natural boundaries."""
+    """breaking text into pieces no longer than max_len, preferring natural boundaries"""
     segments: list[str] = []
     for paragraph in _PARAGRAPH_BREAK.split(text):
         paragraph = paragraph.strip()
@@ -64,7 +46,7 @@ def _segment(text: str, max_len: int) -> list[str]:
 
 
 def _overlap_tail(segments: list[str], overlap: int) -> list[str]:
-    """Trailing segments of a finished chunk to repeat at the start of the next."""
+    """trailing segments of a finished chunk to repeat at the start of the next"""
     if overlap <= 0:
         return []
     tail: list[str] = []
@@ -82,8 +64,7 @@ class TextChunker:
     def __init__(self, chunk_size: int = 800, chunk_overlap: int = 150) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
-        # Overlap must stay below chunk_size, otherwise a chunk could be filled
-        # entirely by repeated content and the splitter would stop progressing.
+        # overlap kept below chunk_size or the splitter would stop progressing
         self.chunk_size = chunk_size
         self.chunk_overlap = max(0, min(chunk_overlap, chunk_size - 1))
 
@@ -99,9 +80,7 @@ class TextChunker:
                 current = _overlap_tail(current, self.chunk_overlap)
                 current_len = sum(len(s) for s in current) + max(0, len(current) - 1)
                 addition = len(segment) + (1 if current else 0)
-            # A segment that still does not fit is added anyway: segments are
-            # already capped at chunk_size, so this only overflows by the
-            # carried overlap, and forcing it guarantees forward progress.
+            # forcing an oversized segment in guarantees forward progress
             current.append(segment)
             current_len += addition
 
@@ -122,8 +101,7 @@ class TextChunker:
         for table in tables or []:
             if not table.strip():
                 continue
-            # Prefix every piece of a table so a chunk retrieved in isolation
-            # still announces itself as tabular data.
+            # prefixing every piece so an isolated chunk still reads as tabular
             for piece in self._pack(_segment(table, self.chunk_size - len(TABLE_PREFIX) - 1)):
                 texts.append(f"{TABLE_PREFIX}\n{piece}")
 
@@ -133,11 +111,7 @@ class TextChunker:
         ]
 
     def chunk_document(self, document: ParsedDocument) -> list[TextChunk]:
-        """Chunk every page, numbering chunks sequentially across the document.
-
-        chunk_index is document-global rather than per-page so that neighbouring
-        chunks can be fetched for context regardless of page boundaries.
-        """
+        """chunking every page, numbering chunks sequentially across the document"""
         chunks: list[TextChunk] = []
         for page in document.pages:
             chunks.extend(

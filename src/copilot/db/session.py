@@ -17,3 +17,8 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_session_factory() -> sessionmaker:
+    """a dependency for code opening its own session outside the request cycle"""
+    return SessionLocal

@@ -1,9 +1,4 @@
-"""Phase 3 deliverable: semantic search over ingested manuals.
-
-This is retrieval only — no generation. It exists so retrieval quality can be
-inspected and measured on its own, before a model starts writing answers on
-top of it in Phase 5.
-"""
+"""semantic search over ingested manuals, retrieval only"""
 
 import logging
 
@@ -24,6 +19,7 @@ def _to_out(evidence: Evidence) -> EvidenceOut:
         document_id=evidence.document_id,
         page_number=evidence.page_number,
         score=evidence.score,
+        fused_score=evidence.fused_score,
         chunk_id=evidence.chunk_id,
         text=evidence.text,
         image_id=evidence.image_id,
@@ -33,9 +29,10 @@ def _to_out(evidence: Evidence) -> EvidenceOut:
 
 @router.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest, stack=Depends(require_retrieval_stack)) -> SearchResponse:
-    results = stack.retriever.retrieve(
+    results = stack.multimodal.retrieve(
         query=request.query,
         top_k=request.top_k,
         document_id=request.document_id,
+        include_images=request.include_images,
     )
     return SearchResponse(query=request.query, results=[_to_out(e) for e in results])

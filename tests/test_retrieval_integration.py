@@ -1,11 +1,6 @@
-"""End-to-end retrieval with the real embedding model.
+"""end to end retrieval with the real embedding model, proving retrieval is semantic
 
-The rest of the suite uses a lexical stand-in, which proves the plumbing but
-cannot show that retrieval is *semantic*. These tests answer questions whose
-wording deliberately does not match the manual's, so a lexical matcher would
-fail them.
-
-Deselected by default (they download model weights on first run):
+deselected by default, downloads model weights on first run:
     pytest -m integration
 """
 
@@ -30,7 +25,7 @@ MODEL = "BAAI/bge-small-en-v1.5"
 
 @pytest.fixture(scope="module")
 def real_embedder() -> SentenceTransformerEmbedder:
-    # Module-scoped: loading the model is by far the slowest part of these tests.
+    # module-scoped, loading the model is by far the slowest part of these tests
     return SentenceTransformerEmbedder(MODEL)
 
 
@@ -66,7 +61,7 @@ def test_model_produces_the_expected_vector_width(
 
 
 def test_paraphrased_question_finds_the_right_page(indexed_manual) -> None:
-    """The manual says "insufficient cooling airflow"; the question does not."""
+    """the manual says "insufficient cooling airflow", the question does not"""
     retriever, _ = indexed_manual
 
     results = retriever.retrieve("Why is the motor running too hot?", top_k=3)
@@ -85,7 +80,7 @@ def test_question_about_specifications_finds_the_table_page(indexed_manual) -> N
 
 
 def test_retrieval_is_semantic_not_lexical(indexed_manual) -> None:
-    """No content word here appears in the manual text."""
+    """no content word here appears in the manual text"""
     retriever, _ = indexed_manual
 
     results = retriever.retrieve("clogged air intake reducing ventilation", top_k=3)
@@ -95,12 +90,7 @@ def test_retrieval_is_semantic_not_lexical(indexed_manual) -> None:
 
 
 def test_unrelated_question_scores_below_manual_content(indexed_manual) -> None:
-    """Groundwork for Phase 5's "insufficient evidence" behaviour.
-
-    BGE scores sit in a narrow band, so this asserts a *relative* gap rather
-    than an absolute floor: an off-topic question must score clearly worse
-    than an on-topic one.
-    """
+    """groundwork for insufficient-evidence behaviour: a relative gap, not an absolute floor"""
     retriever, _ = indexed_manual
 
     on_topic = retriever.retrieve("what causes overheating", top_k=1)

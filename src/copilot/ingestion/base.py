@@ -1,8 +1,4 @@
-"""Phase 2: PDF -> structured document (text, tables, images, per page).
-
-Implemented against in Phase 2. Defined now so the rest of the pipeline
-(chunking, embedding, storage) has a stable contract to build on.
-"""
+"""pdf to structured document, text, tables and images per page"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -32,7 +28,7 @@ class ParsedDocument:
 
 
 class DocumentParser(ABC):
-    """Turns a PDF file into a ParsedDocument, one ExtractedPage per page."""
+    """turning a pdf file into a parsed document, one page at a time"""
 
     @abstractmethod
     def parse(self, file_path: str, document_id: str) -> ParsedDocument: ...

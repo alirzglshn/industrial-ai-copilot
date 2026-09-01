@@ -1,8 +1,4 @@
-"""Phase 3: the text half of the Retriever interface declared in Phase 1.
-
-Phase 4 adds image retrieval and merges both into one evidence list; the
-interface is already shaped for that, which is why Evidence carries a kind.
-"""
+"""the text half of the retriever interface, evidence carries a kind so images can join later"""
 
 from copilot.retrieval.base import Evidence, EvidenceKind, Retriever
 from copilot.retrieval.embedder import TextEmbedder

@@ -15,24 +15,48 @@ class Settings(BaseSettings):
     qdrant_collection_text: str = "manual_text_chunks"
     qdrant_collection_images: str = "manual_images"
 
-    # Where uploaded PDFs and images extracted from them are written.
+    # uploaded pdfs and images extracted from them
     upload_dir: str = "data/uploads"
     image_dir: str = "data/images"
     max_upload_mb: int = 50
+    # rendered source-page images, cached on first render
+    preview_dir: str = "data/previews"
 
-    # Chunking. Chunks never span pages, so a citation always resolves to
-    # exactly one page. See copilot.ingestion.chunker.
+    # chunks never span pages, so a citation resolves to exactly one page
     chunk_size: int = 800
     chunk_overlap: int = 150
 
-    # Retrieval. Indexing on upload keeps the demo to a single call; it is
-    # skipped (leaving the document merely "parsed") if the embedding model or
-    # Qdrant is unavailable, so an upload never fails because of it.
+    # indexing on upload, skipped rather than failing when the model or qdrant is down
     auto_index_on_upload: bool = True
     search_top_k: int = 5
     embed_batch_size: int = 64
 
-    # Sized for CPU-only inference (no dedicated GPU) — see ARCHITECTURE.md.
+    # text and image scores are fused by rank, not compared directly
+    include_images_in_search: bool = True
+    image_search_top_k: int = 5
+    page_context_images: bool = True
+    rrf_k: int = 60
+
+    # off by default, needs a vision model and seconds per image on cpu
+    enable_image_captioning: bool = False
+    caption_model: str = "Salesforce/blip-image-captioning-base"
+    caption_max_new_tokens: int = 40
+    # empty for a plain captioner, set for an instruction-following one
+    caption_prompt: str = ""
+
+    # a vlm is too slow for interactive use on cpu, so text is the default
+    answer_model: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    use_vlm_for_answers: bool = False
+    answer_max_new_tokens: int = 300
+    answer_max_images: int = 3
+    # small models lose the thread over long context
+    answer_top_k: int = 5
+
+    # single-shot planning, not iterative, given the model and hardware
+    agent_max_steps: int = 4
+    agent_planner_max_new_tokens: int = 220
+
+    # sized for cpu-only inference, no dedicated gpu
     text_embedding_model: str = "BAAI/bge-small-en-v1.5"
     image_embedding_model: str = "openai/clip-vit-base-patch32"
     vlm_model: str = "vikhyatk/moondream2"

@@ -1,7 +1,7 @@
-"""Phase 3: embed persisted chunks and load them into Qdrant.
+"""embedding persisted chunks and loading them into qdrant
 
-Postgres stays the source of truth for chunk text and provenance; Qdrant holds
-only vectors plus the payload needed to resolve a hit back to its page.
+postgres is the source of truth for chunk text and provenance, qdrant holds
+only vectors and the payload needed to resolve a hit back to its page
 """
 
 import logging
@@ -33,8 +33,7 @@ class ChunkIndexer:
         if not chunks:
             return 0
 
-        # Re-indexing the same document must not leave the previous vectors
-        # behind, or a shrinking document would keep answering from stale text.
+        # clearing old vectors first, or a shrinking document would keep answering from stale text
         self.store.delete_document(document_id)
 
         indexed = 0
@@ -55,8 +54,7 @@ class ChunkIndexer:
                 ],
             )
             for chunk in batch:
-                # The point id is the chunk id, so this records that the chunk
-                # is live in the vector store rather than a separate identifier.
+                # the point id is the chunk id, recording that the chunk is live in the store
                 chunk.embedding_id = chunk.id
             indexed += len(batch)
 

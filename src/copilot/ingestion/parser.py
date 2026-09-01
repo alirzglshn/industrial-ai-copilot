@@ -1,17 +1,4 @@
-"""Phase 2: PDF -> ParsedDocument (text, tables, images, per page).
-
-Two libraries are used deliberately:
-
-- **pdfplumber** (on pdfminer.six) for text and table extraction. Its table
-  detection is the reason it is here; technical manuals put specifications
-  and tolerances in tables, and losing them to flattened prose would make
-  exactly the questions this system targets unanswerable.
-- **pypdf** for pulling embedded raster images (diagrams, schematics,
-  photos) out of each page.
-
-Both are permissively licensed and pure-Python, so ingestion needs no
-system packages and runs the same on a laptop and in the API container.
-"""
+"""pdf to text, tables, and images per page, via pdfplumber and pypdf"""
 
 import logging
 import re
@@ -30,45 +17,29 @@ from copilot.ingestion.base import (
 
 logger = logging.getLogger(__name__)
 
-# pdfminer emits "(cid:N)" when a font carries no ToUnicode map, so the glyph
-# id cannot be resolved to a character. The text is unrecoverable at this
-# layer; embedding it would put pure noise in the vector index, so it is
-# stripped. Recovering it would need OCR over the rendered page.
+# unresolvable glyph ids from fonts with no ToUnicode map, stripped rather than indexed as noise
 _CID_TOKEN = re.compile(r"\(cid:\d+\)")
 
 
 @dataclass
 class PdfParserConfig:
     image_dir: Path
-    # Manuals repeat logos, rules, and spacer graphics on every page. Indexing
-    # those buries real diagrams in the image search results, so anything
-    # smaller than this in either dimension is skipped.
+    # skipping logos, rules, and spacer graphics repeated on every page
     min_image_width: int = 64
     min_image_height: int = 64
-    # Table quality gate. pdfplumber finds tables from ruling lines, and a
-    # technical manual is full of ruled boxes that are not tables: diagram
-    # frames, figure borders, callout grids, chart axes. Real manuals measured
-    # during Phase 2 produced more junk "tables" than real ones, so a detected
-    # grid must look like actual tabular data before it is treated as one.
+    # table quality gate, since ruled diagram frames and chart axes look like tables too
     min_table_rows: int = 2
     min_table_cols: int = 2
     min_table_filled_cells: int = 4
     min_table_fill_ratio: float = 0.3
     min_table_alpha_chars: int = 8
-    # A grid containing no letters at all is far more often a chart axis than a
-    # specification table, since real tables label their rows or columns. One
-    # is still accepted if it has substantial structure: enough populated cells
-    # and more rows than the one or two a plotted axis occupies.
+    # a letterless grid can still count as a table with enough populated cells and rows
     numeric_table_filled_cells: int = 8
     min_numeric_table_rows: int = 3
 
 
 def clean_extracted_text(text: str) -> str:
-    """Strip unresolvable glyph ids and normalize whitespace.
-
-    Blank lines are preserved because the chunker treats them as paragraph
-    boundaries, but runs of them are collapsed.
-    """
+    """stripping unresolvable glyph ids, normalizing whitespace, keeping paragraph breaks"""
     lines = []
     for raw_line in text.splitlines():
         if not raw_line.strip():
@@ -87,11 +58,7 @@ def _clean_cells(table: list[list[str | None]]) -> list[list[str]]:
 
 
 def is_tabular(table: list[list[str | None]], config: PdfParserConfig) -> bool:
-    """Whether a detected grid carries enough real content to be a table.
-
-    Rejects the empty diagram frames, one-label figure boxes, and chart axes
-    that dominate line-based table detection in illustrated manuals.
-    """
+    """whether a detected grid carries enough real content to count as a table"""
     rows = _clean_cells(table)
     if len(rows) < config.min_table_rows:
         return False
@@ -115,13 +82,7 @@ def is_tabular(table: list[list[str | None]], config: PdfParserConfig) -> bool:
 
 
 def _serialize_table(table: list[list[str | None]]) -> str:
-    """Render an extracted table as pipe-separated rows.
-
-    Kept as text rather than a structured type because the downstream
-    consumers (the embedding model and the answering VLM) both take text, and
-    a pipe-separated grid preserves row/column adjacency that flattened prose
-    would lose.
-    """
+    """rendering an extracted table as pipe-separated rows, preserving row and column adjacency"""
     lines = []
     for row in _clean_cells(table):
         if any(row):
@@ -142,10 +103,7 @@ class PdfDocumentParser(DocumentParser):
             for page_number, page in enumerate(pdf.pages, start=1):
                 kept = self._extract_tables(page, page_number, path.name)
 
-                # Only the regions of tables we actually keep are removed from
-                # the page text. A rejected grid is not a table, so its words
-                # belong in the prose — excluding it too would silently delete
-                # the text inside every diagram frame on the page.
+                # removing only kept table regions from the page text, leaving rejected grids in prose
                 text = self._text_outside_tables(
                     page, [table for table, _ in kept], page_number, path.name
                 )
@@ -162,11 +120,11 @@ class PdfDocumentParser(DocumentParser):
         return ParsedDocument(document_id=document_id, filename=path.name, pages=pages)
 
     def _extract_tables(self, page, page_number: int, filename: str) -> list[tuple[object, str]]:
-        """Detected grids that pass the quality gate, paired with their text."""
+        """detected grids that pass the quality gate, paired with their text"""
         try:
             found = page.find_tables()
         except Exception:
-            # A page whose tables cannot be detected still contributes its text.
+            # a page whose tables cannot be detected still contributes its text
             logger.warning("Table detection failed on page %s of %s", page_number, filename)
             return []
 
@@ -190,14 +148,7 @@ class PdfDocumentParser(DocumentParser):
 
     @staticmethod
     def _text_outside_tables(page, tables, page_number: int, filename: str) -> str:
-        """Page text with table regions removed.
-
-        pdfplumber's extract_text() also returns the words inside tables, so
-        without this a table's contents land in both the prose chunk and the
-        dedicated [Table] chunk. Duplicated evidence is actively harmful: two
-        near-identical chunks can occupy two of the top-k retrieval slots and
-        crowd out genuinely different evidence.
-        """
+        """page text with table regions removed, avoiding duplicate evidence in retrieval"""
         if not tables:
             return page.extract_text() or ""
 
@@ -214,8 +165,7 @@ class PdfDocumentParser(DocumentParser):
         try:
             return page.filter(outside_every_table).extract_text() or ""
         except Exception:
-            # Falling back to the full text duplicates the table rather than
-            # losing the page entirely, which is the safer failure.
+            # falling back to the full text duplicates the table rather than losing the page
             logger.warning(
                 "Could not exclude table regions on page %s of %s", page_number, filename
             )
@@ -233,8 +183,7 @@ class PdfDocumentParser(DocumentParser):
             try:
                 page_images = list(page.images)
             except Exception:
-                # Exotic filters and malformed XObjects are common in the wild;
-                # a page whose images cannot be read still contributes its text.
+                # a page whose images cannot be read still contributes its text
                 logger.warning("Image extraction failed on page %s of %s", page_number, path.name)
                 page_images = []
 
@@ -260,8 +209,7 @@ class PdfDocumentParser(DocumentParser):
 
                 storage_path = output_dir / f"page{page_number:04d}_img{image_index:02d}.png"
                 try:
-                    # Normalize everything to PNG so downstream image embedding
-                    # and page previews deal with exactly one format.
+                    # normalizing to png so downstream embedding and previews deal with one format
                     image.convert("RGB").save(storage_path, format="PNG")
                 except Exception:
                     logger.warning("Could not save image %s from page %s", image_index, page_number)

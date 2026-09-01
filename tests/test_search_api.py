@@ -23,7 +23,10 @@ def test_search_finds_the_page_that_answers_the_question(
 ) -> None:
     document_id = _upload(client, manual_pdf_bytes).json()["id"]
 
-    response = client.post("/search", json={"query": "cooling airflow overheating", "top_k": 3})
+    response = client.post(
+        "/search",
+        json={"query": "cooling airflow overheating", "top_k": 3, "include_images": False},
+    )
 
     assert response.status_code == 200
     results = response.json()["results"]
@@ -58,15 +61,38 @@ def test_search_can_be_restricted_to_one_manual(
     assert {r["document_id"] for r in results} == {first}
 
 
-def test_search_scores_are_descending(client: TestClient, manual_pdf_bytes: bytes) -> None:
+def test_text_only_search_is_ordered_by_similarity(
+    client: TestClient, manual_pdf_bytes: bytes
+) -> None:
+    _upload(client, manual_pdf_bytes)
+
+    results = client.post(
+        "/search", json={"query": "cooling airflow", "top_k": 5, "include_images": False}
+    ).json()["results"]
+
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True)
+    # Nothing was fused, so there is no fused score to report.
+    assert all(r["fused_score"] is None for r in results)
+
+
+def test_combined_search_is_ordered_by_fused_rank(
+    client: TestClient, manual_pdf_bytes: bytes
+) -> None:
+    """Raw scores may not descend once two models' rankings are merged.
+
+    That is the point of fusing: BGE and CLIP similarities are not comparable,
+    so position is decided by rank, and fused_score is what it is decided by.
+    """
     _upload(client, manual_pdf_bytes)
 
     results = client.post("/search", json={"query": "cooling airflow", "top_k": 5}).json()[
         "results"
     ]
 
-    scores = [r["score"] for r in results]
-    assert scores == sorted(scores, reverse=True)
+    fused = [r["fused_score"] for r in results]
+    assert all(value is not None for value in fused)
+    assert fused == sorted(fused, reverse=True)
 
 
 def test_empty_query_is_rejected(client: TestClient) -> None:

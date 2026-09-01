@@ -18,6 +18,15 @@ models/
 # Uploaded documents and extracted images (runtime data, not source)
 data/uploads/
 data/images/
+data/previews/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Phase 7 evaluation output (generated per run; the questions.json input stays tracked)
+eval/evaluation_results.json
+.eval_work/
 
 # IDE
 .vscode/

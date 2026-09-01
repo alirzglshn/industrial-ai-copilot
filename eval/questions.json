@@ -1,0 +1,86 @@
+[
+  {
+    "id": "q01",
+    "category": "retrieval",
+    "question": "What causes the pump to overheat?",
+    "expected_pages": [["grundfos_ups3", 4], ["grundfos_cr", 15]]
+  },
+  {
+    "id": "q02",
+    "category": "retrieval",
+    "question": "How often should the pump be serviced?",
+    "expected_pages": [["grundfos_cr", 15]]
+  },
+  {
+    "id": "q03",
+    "category": "retrieval",
+    "question": "What supply voltage is required?",
+    "expected_pages": [["grundfos_cr", 20], ["grundfos_ups3", 3], ["grundfos_cmbe", 7]]
+  },
+  {
+    "id": "q04",
+    "category": "retrieval",
+    "question": "How do I vent or prime the pump?",
+    "expected_pages": [["grundfos_cmbe", 8], ["grundfos_ups3", 7]]
+  },
+  {
+    "id": "q05",
+    "category": "retrieval",
+    "question": "What does the alarm indicator mean?",
+    "expected_pages": [["grundfos_ups3", 17], ["grundfos_cmbe", 9], ["grundfos_cmbe", 10]]
+  },
+  {
+    "id": "q06",
+    "category": "retrieval",
+    "question": "Is it safe to touch the pump housing while it is running?",
+    "expected_pages": [["grundfos_ups3", 4]]
+  },
+  {
+    "id": "q07",
+    "category": "retrieval",
+    "question": "What should I check if the pump runs but rotation seems wrong?",
+    "expected_pages": [["grundfos_cr", 23]]
+  },
+  {
+    "id": "q08",
+    "category": "retrieval",
+    "question": "How is the motor protected from mains voltage spikes?",
+    "expected_pages": [["grundfos_cmbe", 7]]
+  },
+  {
+    "id": "q09",
+    "category": "retrieval",
+    "question": "What does it mean when two red indicator lights flash?",
+    "expected_pages": [["grundfos_cmbe", 10]]
+  },
+  {
+    "id": "q10",
+    "category": "retrieval",
+    "question": "What should I inspect regularly to keep the pump running efficiently?",
+    "expected_pages": [["grundfos_cr", 15]]
+  },
+  {
+    "id": "q11",
+    "category": "refusal",
+    "question": "What is the boiling point of liquid nitrogen?",
+    "expect_insufficient": true
+  },
+  {
+    "id": "q12",
+    "category": "refusal",
+    "question": "What is the current capital gains tax rate in the United States?",
+    "expect_insufficient": true
+  },
+  {
+    "id": "q13",
+    "category": "refusal",
+    "question": "Who won the most recent FIFA World Cup?",
+    "expect_insufficient": true
+  },
+  {
+    "id": "q14",
+    "category": "calculation",
+    "question": "If pump A has a temperature limit of 95C and pump B has a limit of 80C, what is the percentage difference between them?",
+    "answer_must_contain": ["18.75", "18.8"]
+  }
+]

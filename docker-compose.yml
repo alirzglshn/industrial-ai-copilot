@@ -1,4 +1,16 @@
 services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      # The one URL to open: http://localhost:3000. nginx inside this
+      # container serves the built React app and reverse-proxies every API
+      # path to the api service (see frontend/nginx.conf) — the browser only
+      # ever talks to this one origin, on this one port.
+      - "3000:80"
+    depends_on:
+      - api
+
   api:
     build:
       context: .

@@ -1,4 +1,4 @@
-"""Phase 3: Qdrant collection management, upsert, and filtered similarity search."""
+"""qdrant collection management, upsert, and filtered similarity search"""
 
 import logging
 from dataclasses import dataclass
@@ -29,13 +29,12 @@ class QdrantVectorStore:
             return
         self.client.create_collection(
             collection_name=self.collection_name,
-            # Cosine, paired with normalized embeddings from the embedder.
+            # cosine, paired with normalized embeddings from the embedder
             vectors_config=models.VectorParams(
                 size=self.dimension, distance=models.Distance.COSINE
             ),
         )
-        # document_id is the only field ever filtered on, and an unindexed
-        # payload filter forces Qdrant to scan.
+        # document_id is the only field ever filtered on, unindexed forces qdrant to scan
         self.client.create_payload_index(
             collection_name=self.collection_name,
             field_name="document_id",
@@ -83,7 +82,7 @@ class QdrantVectorStore:
         ]
 
     def delete_document(self, document_id: str) -> None:
-        """Removes a document's points so re-indexing cannot leave stale vectors behind."""
+        """removing a document's points so re-indexing cannot leave stale vectors behind"""
         self.client.delete(
             collection_name=self.collection_name,
             points_selector=models.FilterSelector(
@@ -106,6 +105,20 @@ def build_text_vector_store(dimension: int, settings: Settings | None = None) ->
     store = QdrantVectorStore(
         client=QdrantClient(url=settings.qdrant_url),
         collection_name=settings.qdrant_collection_text,
+        dimension=dimension,
+    )
+    store.ensure_collection()
+    return store
+
+
+def build_image_vector_store(
+    dimension: int, settings: Settings | None = None
+) -> QdrantVectorStore:
+    """own collection for images, since mixing clip and text vector spaces breaks similarity"""
+    settings = settings or get_settings()
+    store = QdrantVectorStore(
+        client=QdrantClient(url=settings.qdrant_url),
+        collection_name=settings.qdrant_collection_images,
         dimension=dimension,
     )
     store.ensure_collection()

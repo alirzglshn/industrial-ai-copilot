@@ -1,9 +1,4 @@
-"""Phase 2: orchestration — upload -> parse -> chunk -> persist.
-
-This is the seam later phases plug into: Phase 3 embeds the Chunk rows this
-writes, and Phase 4 embeds the Image rows. Nothing here talks to a model, so
-ingestion stays runnable (and testable) without any ML dependencies installed.
-"""
+"""orchestration: upload, parse, chunk, persist, with no model dependency"""
 
 import logging
 import uuid
@@ -32,8 +27,7 @@ class IngestionService:
 
     def save_upload(self, document_id: str, filename: str, content: bytes) -> Path:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
-        # Stored under the document id, not the original filename: two manuals
-        # can share a name, and the id is what every downstream row references.
+        # stored under the document id rather than the filename, since names can collide
         path = self.upload_dir / f"{document_id}.pdf"
         path.write_bytes(content)
         return path
@@ -95,5 +89,5 @@ def build_ingestion_service(settings: Settings | None = None) -> IngestionServic
 
 
 def get_ingestion_service() -> IngestionService:
-    """FastAPI dependency. Overridden in tests to redirect storage to a tmp dir."""
+    """fastapi dependency, overridden in tests to redirect storage to a tmp dir"""
     return build_ingestion_service()
